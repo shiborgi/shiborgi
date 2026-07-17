@@ -40,10 +40,7 @@ describe('container/cli-tools.json installs the pi coding-agent CLI', () => {
   const pi = manifest.find((t) => t.name === '@earendil-works/pi-coding-agent');
 
   it('declares @earendil-works/pi-coding-agent as a pinned tool (not latest)', () => {
-    expect(
-      pi,
-      '@earendil-works/pi-coding-agent entry missing from container/cli-tools.json',
-    ).toBeDefined();
+    expect(pi, '@earendil-works/pi-coding-agent entry missing from container/cli-tools.json').toBeDefined();
     expect(pi!.version).toBeTruthy();
     expect(pi!.version).not.toBe('latest');
     expect(pi!.version).toMatch(/^\d+\.\d+\.\d+(?:-[\w.]+)?$/);
