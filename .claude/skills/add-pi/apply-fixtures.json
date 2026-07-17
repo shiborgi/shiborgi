@@ -1,0 +1,10 @@
+{
+  "notes": "Conformance fixtures for scripts/skill-conformance.test.ts. The skill is fully automatic — no nc:prompt directives, just install steps and a final build/test. The single 'default' scenario stubs each shell command that the apply block runs (cp, pnpm, vitest, bun, etc.); gates are undefaultable no-ops since there are no user answers to collect.",
+  "scenarios": [
+    {
+      "name": "default",
+      "inputs": {},
+      "exec": []
+    }
+  ]
+}
