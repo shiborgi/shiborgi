@@ -1,0 +1,23 @@
+{
+  "notes": "Conformance fixtures for scripts/skill-conformance.test.ts. The skill is mostly automatic — it has no nc:prompt directives, only pre-flight checks and capture runs. Two scenarios cover (a) the happy path with a working bridge100 (192.168.64.1), and (b) bridge100 missing so the no-bridge branch exercises its downstream log/warning.",
+  "scenarios": [
+    {
+      "name": "bridge-present",
+      "inputs": {},
+      "exec": [
+        { "match": "container --version", "stdout": "Apple Container version 1.1.0+ (build abc123)" },
+        { "match": "uname -m", "stdout": "arm64" },
+        { "match": "ifconfig bridge100", "stdout": "bridge100: flags=8863<UP> mtu 1500\n\tinet 192.168.64.1 netmask 0xffffff00\n" }
+      ]
+    },
+    {
+      "name": "bridge-missing",
+      "inputs": {},
+      "exec": [
+        { "match": "container --version", "stdout": "Apple Container version 1.1.0+ (build abc123)" },
+        { "match": "uname -m", "stdout": "arm64" },
+        { "match": "ifconfig bridge100", "stdout": "ifconfig: interface bridge100 does not exist" }
+      ]
+    }
+  ]
+}

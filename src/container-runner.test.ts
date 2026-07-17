@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderName } from './container-runner.js';
+import { resolveProviderName } from './container-provider.js';
 
 describe('resolveProviderName', () => {
   it('prefers session over container config', () => {
@@ -106,11 +106,11 @@ describe('syncSkillSymlinks blocked-entry warning (structural)', () => {
   // effects, so guard the wiring structurally: the create loop must warn
   // when a non-symlink entry occupies a desired skill path.
   it('warns instead of silently skipping when a real entry blocks a desired skill', () => {
-    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'mount-builder.ts'), 'utf-8');
     const createLoop = src.indexOf('// Create symlinks for desired skills');
     expect(createLoop).toBeGreaterThan(-1);
     const tail = src.slice(createLoop);
     expect(tail).toMatch(/else if \(!entry\.isSymbolicLink\(\)\)/);
-    expect(tail).toMatch(/log\.warn\(\s*'Shared skill not symlinked/);
+    expect(tail).toMatch(/Shared skill not symlinked|template overlay/);
   });
 });

@@ -9,7 +9,7 @@
  *     `container.json`)
  *   - optional provider-neutral standing instructions
  *
- * Runs on every spawn from `container-runner.buildMounts()`. Deterministic —
+ * Runs on every spawn from `mount-builder.buildMounts()`. Deterministic —
  * same inputs produce the same CLAUDE.md, and stale fragments are pruned.
  * The composition order and fragment sources are documented inline above.
  */
