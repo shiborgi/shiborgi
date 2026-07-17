@@ -22,7 +22,7 @@ vi.mock('./log.js', () => ({
   },
 }));
 
-import { buildMounts } from './container-runner.js';
+import { buildMounts } from './mount-builder.js';
 import { closeDb, createAgentGroup, initTestDb, runMigrations } from './db/index.js';
 import { ensureContainerConfig } from './db/container-configs.js';
 import { initGroupFilesystem } from './group-init.js';

@@ -3,51 +3,42 @@
  * Spawns agent containers with session folder + agent group folder mounts.
  * The container runs the v2 agent-runner which polls the session DB.
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
-import path from 'path';
-import { promisify } from 'util';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   CONTAINER_CPU_LIMIT,
   CONTAINER_IMAGE,
-  CONTAINER_IMAGE_BASE,
   CONTAINER_INSTALL_LABEL,
   CONTAINER_MEMORY_LIMIT,
-  DATA_DIR,
-  GROUPS_DIR,
   ONECLI_API_KEY,
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
 import { materializeContainerJson } from './container-config.js';
-import { getContainerConfig } from './db/container-configs.js';
-import { updateContainerConfigScalars } from './db/container-configs.js';
+import type { ContainerConfig } from './container-config.js';
+import { resolveProviderContribution, resolveProviderName } from './container-provider.js';
+import { buildAgentGroupImage } from './image-builder.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
 import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
-import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
-import { validateAdditionalMounts } from './modules/mount-security/index.js';
+import { buildMounts, selectedSkillNames } from './mount-builder.js';
+
+
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
 import './providers/index.js';
-import {
-  getProviderContainerConfig,
-  providerProvidesAgentSurfaces,
-  type ProviderContainerContribution,
-  type VolumeMount,
-} from './providers/provider-container-registry.js';
+import type { ProviderContainerContribution, VolumeMount } from './providers/provider-container-registry.js';
 import {
   heartbeatPath,
   markContainerRunning,
   markContainerStopped,
-  sessionDir,
   writeSessionRouting,
 } from './session-manager.js';
 import type { AgentGroup, Session } from './types.js';
@@ -141,7 +132,12 @@ async function spawnContainer(session: Session): Promise<void> {
   // Resolve the effective provider + any host-side contribution it declares
   // (extra mounts, env passthrough). Computed once and threaded through both
   // buildMounts and buildContainerArgs so side effects (mkdir, etc.) fire once.
-  const { provider, contribution } = resolveProviderContribution(session, agentGroup, containerConfig);
+  const { provider, contribution } = resolveProviderContribution(
+    session,
+    agentGroup,
+    containerConfig,
+    selectedSkillNames(containerConfig),
+  );
 
   const mounts = buildMounts(agentGroup, session, containerConfig, provider, contribution);
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
@@ -212,8 +208,7 @@ async function spawnContainer(session: Session): Promise<void> {
   });
 }
 
-/** Kill a container for a session. */
-export function killContainer(sessionId: string, reason: string, onExit?: () => void): void {
+/** Kill a container for a session. */export function killContainer(sessionId: string, reason: string, onExit?: () => void): void {
   const entry = activeContainers.get(sessionId);
   if (!entry) return;
 
@@ -229,213 +224,11 @@ export function killContainer(sessionId: string, reason: string, onExit?: () => 
   }
 }
 
-/**
- * Resolve the provider name for a session:
- *
- *   sessions.agent_provider
- *     → container_configs.provider
- *     → 'claude'
- *
- * Pure so the precedence can be unit-tested without a DB or filesystem.
- */
-export function resolveProviderName(
-  sessionProvider: string | null | undefined,
-  containerConfigProvider: string | null | undefined,
-): string {
-  return (sessionProvider || containerConfigProvider || 'claude').toLowerCase();
-}
-
-function resolveProviderContribution(
-  session: Session,
-  agentGroup: AgentGroup,
-  containerConfig: import('./container-config.js').ContainerConfig,
-): { provider: string; contribution: ProviderContainerContribution } {
-  const provider = resolveProviderName(session.agent_provider, containerConfig.provider);
-  const fn = getProviderContainerConfig(provider);
-  const contribution = fn
-    ? fn({
-        sessionDir: sessionDir(agentGroup.id, session.id),
-        agentGroupId: agentGroup.id,
-        groupDir: path.resolve(GROUPS_DIR, agentGroup.folder),
-        selectedSkills: selectedSkillNames(containerConfig),
-        hostEnv: process.env,
-      })
-    : {};
-  return { provider, contribution };
-}
-
-export function buildMounts(
-  agentGroup: AgentGroup,
-  session: Session,
-  containerConfig: import('./container-config.js').ContainerConfig,
-  provider: string,
-  providerContribution: ProviderContainerContribution,
-): VolumeMount[] {
-  const projectRoot = process.cwd();
-
-  // Default agent surfaces (composed project doc, skill links, provider state
-  // dir) apply unless the provider's registration declares it provides its
-  // own — a capability, never a provider name. See provider-container-registry.
-  const defaultSurfaces = !providerProvidesAgentSurfaces(provider);
-
-  const claudeDir = path.join(DATA_DIR, 'v2-sessions', agentGroup.id, '.claude-shared');
-  if (defaultSurfaces) {
-    // Sync skill symlinks based on container.json selection before mounting.
-    syncSkillSymlinks(claudeDir, containerConfig);
-
-    // Compose CLAUDE.md fresh every spawn from the shared base, enabled skill
-    // fragments, and MCP server instructions. See `claude-md-compose.ts`.
-    composeGroupClaudeMd(agentGroup);
-  }
-
-  const mounts: VolumeMount[] = [];
-  const sessDir = sessionDir(agentGroup.id, session.id);
-  const groupDir = path.resolve(GROUPS_DIR, agentGroup.folder);
-
-  // Session folder at /workspace (contains inbound.db, outbound.db, outbox/, .claude/)
-  mounts.push({ hostPath: sessDir, containerPath: '/workspace', readonly: false });
-
-  // Agent group folder at /workspace/agent (RW for working files + shared memory)
-  mounts.push({ hostPath: groupDir, containerPath: '/workspace/agent', readonly: false });
-
-  // container.json — nested RO mount on top of RW group dir so the agent
-  // can read its config but cannot modify it.
-  const containerJsonPath = path.join(groupDir, 'container.json');
-  if (fs.existsSync(containerJsonPath)) {
-    mounts.push({ hostPath: containerJsonPath, containerPath: '/workspace/agent/container.json', readonly: true });
-  }
-
-  // Composer-managed CLAUDE.md artifacts — nested RO mounts. These are
-  // regenerated from the shared base + fragments on every spawn; any
-  // agent-side writes would be clobbered, so enforce read-only. The shared
-  // memory tree and standing-instructions source remain RW via the group mount.
-  // `.claude-shared.md` is a symlink whose target (`/app/CLAUDE.md`) is
-  // already RO-mounted, so writes through it fail regardless — no need for
-  // a nested mount there.
-  const composedClaudeMd = path.join(groupDir, 'CLAUDE.md');
-  if (defaultSurfaces && fs.existsSync(composedClaudeMd)) {
-    mounts.push({ hostPath: composedClaudeMd, containerPath: '/workspace/agent/CLAUDE.md', readonly: true });
-  }
-  const fragmentsDir = path.join(groupDir, '.claude-fragments');
-  if (defaultSurfaces && fs.existsSync(fragmentsDir)) {
-    mounts.push({ hostPath: fragmentsDir, containerPath: '/workspace/agent/.claude-fragments', readonly: true });
-  }
-
-  // Shared CLAUDE.md — read-only, imported by the composed entry point via
-  // the `.claude-shared.md` symlink inside the group dir.
-  const sharedClaudeMd = path.join(process.cwd(), 'container', 'CLAUDE.md');
-  if (defaultSurfaces && fs.existsSync(sharedClaudeMd)) {
-    mounts.push({ hostPath: sharedClaudeMd, containerPath: '/app/CLAUDE.md', readonly: true });
-  }
-
-  // Per-group .claude-shared at /home/node/.claude (Claude state, settings,
-  // skill symlinks)
-  if (defaultSurfaces) {
-    mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
-  }
-
-  // Shared agent-runner source — read-only, same code for all groups.
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
-  mounts.push({ hostPath: agentRunnerSrc, containerPath: '/app/src', readonly: true });
-
-  // Shared skills — read-only, symlinks in .claude-shared/skills/ point here.
-  const skillsSrc = path.join(projectRoot, 'container', 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    mounts.push({ hostPath: skillsSrc, containerPath: '/app/skills', readonly: true });
-  }
-
-  // Additional mounts from container config
-  if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-    const validated = validateAdditionalMounts(containerConfig.additionalMounts, agentGroup.name);
-    mounts.push(...validated);
-  }
-
-  // Provider-contributed mounts (e.g. opencode-xdg)
-  if (providerContribution.mounts) {
-    mounts.push(...providerContribution.mounts);
-  }
-
-  return mounts;
-}
-
-/**
- * Sync skill symlinks in .claude-shared/skills/ to match the container.json
- * selection. Each symlink points to a container path (/app/skills/<name>)
- * so it's dangling on the host but valid inside the container.
- */
-function syncSkillSymlinks(claudeDir: string, containerConfig: import('./container-config.js').ContainerConfig): void {
-  const skillsDir = path.join(claudeDir, 'skills');
-  if (!fs.existsSync(skillsDir)) {
-    fs.mkdirSync(skillsDir, { recursive: true });
-  }
-
-  const desired = selectedSkillNames(containerConfig);
-  const desiredSet = new Set(desired);
-
-  // Remove symlinks not in the desired set
-  for (const entry of fs.readdirSync(skillsDir)) {
-    const entryPath = path.join(skillsDir, entry);
-    let isSymlink = false;
-    try {
-      isSymlink = fs.lstatSync(entryPath).isSymbolicLink();
-    } catch {
-      continue;
-    }
-    if (isSymlink && !desiredSet.has(entry)) {
-      fs.unlinkSync(entryPath);
-    }
-  }
-
-  // Create symlinks for desired skills (container path targets)
-  for (const skill of desired) {
-    const linkPath = path.join(skillsDir, skill);
-    let entry: fs.Stats | undefined;
-    try {
-      entry = fs.lstatSync(linkPath);
-    } catch {
-      /* missing */
-    }
-    if (!entry) {
-      fs.symlinkSync(`/app/skills/${skill}`, linkPath);
-    } else if (!entry.isSymbolicLink()) {
-      // A real entry here is either a template overlay (intentional; see
-      // src/group-skills.ts) or a stale pre-refactor skill copy that shadows
-      // the shared skill (#3001). No marker distinguishes them yet, so
-      // surface the skip instead of staying silent.
-      log.warn(
-        'Shared skill not symlinked: real entry occupies the path (template overlay or stale pre-refactor copy)',
-        {
-          skill,
-          path: linkPath,
-        },
-      );
-    }
-  }
-}
-
-/**
- * Resolve the group's skill selection to concrete names — `'all'` recomputes
- * from `container/skills/` so newly-added upstream skills appear automatically.
- */
-function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
-  if (containerConfig.skills !== 'all') return containerConfig.skills;
-  const sharedSkillsDir = path.join(process.cwd(), 'container', 'skills');
-  return fs.existsSync(sharedSkillsDir)
-    ? fs.readdirSync(sharedSkillsDir).filter((e) => {
-        try {
-          return fs.statSync(path.join(sharedSkillsDir, e)).isDirectory();
-        } catch {
-          return false;
-        }
-      })
-    : [];
-}
-
 async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   agentGroup: AgentGroup,
-  containerConfig: import('./container-config.js').ContainerConfig,
+  containerConfig: ContainerConfig,
   _provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
@@ -516,57 +309,10 @@ async function buildContainerArgs(
   return args;
 }
 
-const execAsync = promisify(exec);
+// Re-export `buildAgentGroupImage` from image-builder so existing callers
+// (`cli/resources/groups.ts`, `modules/self-mod/apply.ts`) keep their
+// import path. The implementation moved out of container-runner because
+// it changes independently of the spawn/wake contract (separate churn
+// rate, separate tests).
+export { buildAgentGroupImage };
 
-/** Build a per-agent-group Docker image with custom packages. */
-export async function buildAgentGroupImage(agentGroupId: string): Promise<void> {
-  const agentGroup = getAgentGroup(agentGroupId);
-  if (!agentGroup) throw new Error('Agent group not found');
-
-  const configRow = getContainerConfig(agentGroup.id);
-  if (!configRow) throw new Error('Container config not found');
-  const aptPackages = JSON.parse(configRow.packages_apt) as string[];
-  const npmPackages = JSON.parse(configRow.packages_npm) as string[];
-  if (aptPackages.length === 0 && npmPackages.length === 0) {
-    throw new Error('No packages to install. Use install_packages first.');
-  }
-
-  let dockerfile = `FROM ${CONTAINER_IMAGE}\nUSER root\n`;
-  if (aptPackages.length > 0) {
-    dockerfile += `RUN apt-get update && apt-get install -y ${aptPackages.join(' ')} && rm -rf /var/lib/apt/lists/*\n`;
-  }
-  if (npmPackages.length > 0) {
-    // pnpm skips build scripts unless packages are allowlisted. Append each
-    // to /root/.npmrc (base image sets it up for agent-browser) so packages
-    // with postinstall — e.g. playwright, puppeteer, native addons — don't
-    // install silently broken.
-    const allowlist = npmPackages.map((p) => `echo 'only-built-dependencies[]=${p}' >> /root/.npmrc`).join(' && ');
-    dockerfile += `RUN ${allowlist} && pnpm install -g ${npmPackages.join(' ')}\n`;
-  }
-  dockerfile += 'USER node\n';
-
-  const imageTag = `${CONTAINER_IMAGE_BASE}:${agentGroupId}`;
-
-  log.info('Building per-agent-group image', { agentGroupId, imageTag, apt: aptPackages, npm: npmPackages });
-
-  // Write Dockerfile to temp file and build
-  const tmpDockerfile = path.join(DATA_DIR, `Dockerfile.${agentGroupId}`);
-  fs.writeFileSync(tmpDockerfile, dockerfile);
-  try {
-    // Awaited async exec so the single-threaded host stays responsive during
-    // the build (can take minutes) instead of blocking on execSync. exec buffers
-    // stdout/stderr (matching the old stdio: 'pipe') and rejects on a non-zero
-    // exit, so error propagation is unchanged.
-    await execAsync(`${CONTAINER_RUNTIME_BIN} build -t ${imageTag} -f ${tmpDockerfile} .`, {
-      cwd: DATA_DIR,
-      timeout: 900_000,
-    });
-  } finally {
-    fs.unlinkSync(tmpDockerfile);
-  }
-
-  // Store the image tag in the DB
-  updateContainerConfigScalars(agentGroup.id, { image_tag: imageTag });
-
-  log.info('Per-agent-group image built', { agentGroupId, imageTag });
-}

@@ -1,0 +1,61 @@
+diff --git a/setup/service.ts b/setup/service.ts
+index 77ec9d3..c8a8efb 100644
+--- a/setup/service.ts
++++ b/setup/service.ts
+@@ -10,6 +10,7 @@ import os from 'os';
+ import path from 'path';
+ 
+ import { log } from '../src/log.js';
++import { readEnvFile } from '../src/env.js';
+ import { getLaunchdLabel, getSystemdUnit } from '../src/install-slug.js';
+ import { writeUpgradeState } from '../src/upgrade-state.js';
+ import { cleanupUnhealthyPeers } from './peer-cleanup.js';
+@@ -147,6 +148,16 @@ function setupLaunchd(
+   );
+   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+ 
++  // Read runtime-related env vars from .env so the launchd plist reflects
++  // the user's choice. Today only CONTAINER_RUNTIME is honored (set by the
++  // /apple-container skill); this list extends naturally when new switches
++  // land. Re-running /setup rewrites the plist with the latest values, so
++  // a `sed -i` on .env followed by /setup propagates without a manual edit.
++  const envExtras = readEnvFile(['CONTAINER_RUNTIME']);
++  const runtimeEnvLines = envExtras.CONTAINER_RUNTIME
++    ? `\n        <key>CONTAINER_RUNTIME</key>\n        <string>${envExtras.CONTAINER_RUNTIME}</string>`
++    : '';
++
+   const plist = `<?xml version="1.0" encoding="UTF-8"?>
+ <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+ <plist version="1.0">
+@@ -169,7 +180,7 @@ function setupLaunchd(
+         <key>PATH</key>
+         <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
+         <key>HOME</key>
+-        <string>${homeDir}</string>
++        <string>${homeDir}</string>${runtimeEnvLines}
+     </dict>
+     <key>StandardOutPath</key>
+     <string>${projectRoot}/logs/nanoclaw.log</string>
+@@ -319,6 +330,13 @@ function setupSystemd(
+     systemctlPrefix = 'systemctl --user';
+   }
+ 
++  // Mirror the launchd path: read runtime switches from .env so the unit
++  // captures CONTAINER_RUNTIME (and future switches) without a manual edit.
++  const envExtras = readEnvFile(['CONTAINER_RUNTIME']);
++  const systemdRuntimeEnvLines = envExtras.CONTAINER_RUNTIME
++    ? `Environment=CONTAINER_RUNTIME=${envExtras.CONTAINER_RUNTIME}`
++    : '';
++
+   const unit = `[Unit]
+ Description=NanoClaw Personal Assistant
+ After=network.target
+@@ -332,6 +350,8 @@ RestartSec=5
+ KillMode=process
+ Environment=HOME=${homeDir}
+ Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
++${systemdRuntimeEnvLines}
++StandardOutput=append:${projectRoot}/logs/nanoclaw.log
+ StandardOutput=append:${projectRoot}/logs/nanoclaw.log
+ StandardError=append:${projectRoot}/logs/nanoclaw.error.log
+ 

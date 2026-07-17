@@ -1,0 +1,36 @@
+diff --git a/src/index.ts b/src/index.ts
+index 7680c3f..a669af6 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -11,7 +11,7 @@ import { DATA_DIR } from './config.js';
+ import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
+ import { initDb } from './db/connection.js';
+ import { runMigrations } from './db/migrations/index.js';
+-import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
++import { ensureContainerRuntimeRunning, cleanupOrphans, getAppleBridgeIp, CONTAINER_RUNTIME_BIN } from './container-runtime.js';
+ import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
+ import { startHostSweep, stopHostSweep } from './host-sweep.js';
+ import { routeInbound } from './router.js';
+@@ -82,6 +82,22 @@ async function main(): Promise<void> {
+   ensureContainerRuntimeRunning();
+   cleanupOrphans();
+ 
++  // 2a. Apple Container: resolve host.docker.internal gateway IP from the
++  // bridge interface Apple Container 1.1.0 creates. Persist in env so
++  // container-runtime.ts can reuse it on every spawn without re-running
++  // ifconfig. Skipped entirely when CONTAINER_RUNTIME != 'container'.
++  if (CONTAINER_RUNTIME_BIN === 'container') {
++    const ip = getAppleBridgeIp();
++    if (ip) {
++      process.env.APPLE_CONTAINER_BRIDGE_IP = ip;
++      log.info('Apple Container bridge detected', { ip });
++    } else {
++      log.warn(
++        'Apple Container bridge100 interface not found — host.docker.internal may not resolve inside the container',
++      );
++    }
++  }
++
+   // 3. Channel adapters
+   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
+     return {

@@ -1,0 +1,39 @@
+diff --git a/src/egress-lockdown.ts b/src/egress-lockdown.ts
+index 1e6f6ff..691c336 100644
+--- a/src/egress-lockdown.ts
++++ b/src/egress-lockdown.ts
+@@ -52,6 +52,16 @@ function gatewayAttached(): boolean {
+   }
+ }
+ 
++/**
++ * Apple Container does not have a Docker-style `--internal` bridge network,
++ * so the egress lockdown cannot be established there. The container has
++ * default egress when used with `/use-native-credential-proxy` — that is
++ * the documented trade-off of that skill.
++ */
++function isAppleContainer(): boolean {
++  return CONTAINER_RUNTIME_BIN === 'container';
++}
++
+ /**
+  * Ensure the egress network exists with the OneCLI gateway attached (aliased
+  * host.docker.internal). Idempotent + self-healing. Returns false when lockdown
+@@ -60,6 +70,17 @@ function gatewayAttached(): boolean {
+  * spawn an agent with open egress.
+  */
+ export function ensureEgressNetwork(): boolean {
++  if (isAppleContainer()) {
++    // Apple Container has no `--internal` bridge network. Lockdown is
++    // structurally impossible here; calling docker network create/connect
++    // would be both pointless and a layering violation. Return false so
++    // container-runner.ts falls through to the host gateway path (no
++    // --network flag). Companion trade-off: with native credential proxy,
++    // the agent has default egress.
++    log.info('Apple Container: egress lockdown disabled (no --internal bridge)');
++    return false;
++  }
++
+   if (!EGRESS_LOCKDOWN) return false;
+ 
+   if (
