@@ -48,3 +48,8 @@ AGENTS.md
 docs/maintainer-guide.md
 docs/drafts/
 forks.md
+
+# Gateway policy and credentials are per-install, never committed.
+# `gateway/config/*.example.*` are the templates and DO stay tracked.
+gateway/config/gateway.json
+gateway/config/secrets.env

@@ -25,6 +25,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-config.js';
+import { mcpGatewayTransform } from './gateway-mcp-transform.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
@@ -313,7 +314,11 @@ async function spawnContainer(session: Session): Promise<void> {
   // Materialize container.json from DB — writes fresh file and returns
   // the config object, threaded through provider resolution, buildMounts,
   // and buildContainerArgs so we don't re-read.
-  const containerConfig = await materializeContainerJson(agentGroup.id);
+  // MCP endpoints are resolved here, not stored: the gateway's address is
+  // assigned by the runtime and changes when it is recreated, so a URL frozen
+  // in the DB would be right until the first gateway restart. No-op on an
+  // install whose gateway is not the in-tree one.
+  const containerConfig = await materializeContainerJson(agentGroup.id, mcpGatewayTransform(agentGroup.id));
 
   const providerName = resolveProviderName(session.agent_provider, containerConfig.provider);
   await initGroupFilesystem(agentGroup, { provider: providerName });

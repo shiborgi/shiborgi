@@ -1,0 +1,230 @@
+/**
+ * The gateway's policy document — the whole of this install's LLM and MCP
+ * configuration, and the only place upstream credentials are named.
+ *
+ * Two files, mounted read-only:
+ *   config/gateway.json  — routing and policy, safe to commit or share
+ *   config/secrets.env   — the credential values, never committed
+ *
+ * They are split because they have different lifetimes and different audiences.
+ * The policy is what an operator reads and edits to answer "which model does
+ * the bar assistant use"; the secrets are what must never appear in a diff, a
+ * log line, or an agent's environment. The policy references a secret by NAME
+ * only, so it can be shown to anyone.
+ *
+ * Both are re-read per request rather than cached at boot. The gateway is one
+ * small process on a local network and a file read is nothing next to the
+ * upstream round trip it is about to make; in exchange, editing a model or
+ * rotating a key takes effect on the next call instead of requiring a restart
+ * that would drop in-flight sessions.
+ */
+
+/** How a credential is presented to an upstream. */
+export interface UpstreamAuth {
+  /** Header name, e.g. `Authorization` or `x-api-key`. */
+  header: string;
+  /** Template with `{value}` where the secret goes, e.g. `Bearer {value}`. */
+  format: string;
+  /** Key in `secrets.env`. The value never appears in this document. */
+  secret: string;
+}
+
+export interface Upstream {
+  /** Base URL including any version prefix, e.g. `https://api.anthropic.com/v1`. */
+  baseUrl: string;
+  auth?: UpstreamAuth;
+}
+
+export interface ModelRoute {
+  upstream: string;
+  /** The upstream's own name for the model, when it differs from the alias. */
+  model?: string;
+}
+
+export interface McpRoute {
+  url: string;
+  auth?: UpstreamAuth;
+}
+
+export interface AgentPolicy {
+  /** Model aliases this agent may use. `["*"]` means every configured model. */
+  models: string[];
+  /** MCP server names this agent may reach. `["*"]` means every configured one. */
+  mcpServers: string[];
+}
+
+export interface GatewayConfig {
+  schemaVersion: number;
+  upstreams: Record<string, Upstream>;
+  models: Record<string, ModelRoute>;
+  mcpServers: Record<string, McpRoute>;
+  /** Keyed by agent group id. `*` is the fallback for a group with no entry. */
+  agents: Record<string, AgentPolicy>;
+}
+
+export class GatewayConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GatewayConfigError';
+  }
+}
+
+/**
+ * Resolved per call, not at module load. Reading these at import time would
+ * freeze them before a caller could set them, and would quietly contradict the
+ * re-read-per-request behavior this module exists to provide.
+ */
+function configPath(): string {
+  return process.env.GATEWAY_CONFIG ?? '/app/config/gateway.json';
+}
+function secretsPath(): string {
+  return process.env.GATEWAY_SECRETS ?? '/app/config/secrets.env';
+}
+
+function requireObject(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new GatewayConfigError(`${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new GatewayConfigError(`${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function parseAuth(raw: unknown, field: string): UpstreamAuth | undefined {
+  if (raw === undefined) return undefined;
+  const auth = requireObject(raw, field);
+  const format = requireString(auth.format, `${field}.format`);
+  if (!format.includes('{value}')) {
+    // Without the placeholder the credential would silently never be sent, and
+    // the failure would surface as an upstream 401 with nothing pointing here.
+    throw new GatewayConfigError(`${field}.format must contain {value}`);
+  }
+  return {
+    header: requireString(auth.header, `${field}.header`),
+    format,
+    secret: requireString(auth.secret, `${field}.secret`),
+  };
+}
+
+export function parseConfig(raw: string): GatewayConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new GatewayConfigError('gateway.json is not valid JSON');
+  }
+  const doc = requireObject(parsed, 'gateway.json');
+  if (doc.schemaVersion !== 1) {
+    throw new GatewayConfigError(`unsupported schemaVersion ${String(doc.schemaVersion)}; this gateway understands 1`);
+  }
+
+  const upstreams: Record<string, Upstream> = {};
+  for (const [name, value] of Object.entries(requireObject(doc.upstreams ?? {}, 'upstreams'))) {
+    const entry = requireObject(value, `upstreams.${name}`);
+    upstreams[name] = {
+      baseUrl: requireString(entry.baseUrl, `upstreams.${name}.baseUrl`).replace(/\/+$/, ''),
+      auth: parseAuth(entry.auth, `upstreams.${name}.auth`),
+    };
+  }
+
+  const models: Record<string, ModelRoute> = {};
+  for (const [alias, value] of Object.entries(requireObject(doc.models ?? {}, 'models'))) {
+    const entry = requireObject(value, `models.${alias}`);
+    const upstream = requireString(entry.upstream, `models.${alias}.upstream`);
+    if (!upstreams[upstream]) {
+      throw new GatewayConfigError(`models.${alias}.upstream "${upstream}" is not a configured upstream`);
+    }
+    models[alias] = { upstream, model: typeof entry.model === 'string' ? entry.model : undefined };
+  }
+
+  const mcpServers: Record<string, McpRoute> = {};
+  for (const [name, value] of Object.entries(requireObject(doc.mcpServers ?? {}, 'mcpServers'))) {
+    const entry = requireObject(value, `mcpServers.${name}`);
+    mcpServers[name] = {
+      url: requireString(entry.url, `mcpServers.${name}.url`),
+      auth: parseAuth(entry.auth, `mcpServers.${name}.auth`),
+    };
+  }
+
+  const agents: Record<string, AgentPolicy> = {};
+  for (const [id, value] of Object.entries(requireObject(doc.agents ?? {}, 'agents'))) {
+    const entry = requireObject(value, `agents.${id}`);
+    const list = (field: 'models' | 'mcpServers'): string[] => {
+      const raw = entry[field] ?? [];
+      if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string')) {
+        throw new GatewayConfigError(`agents.${id}.${field} must be an array of strings`);
+      }
+      return raw as string[];
+    };
+    agents[id] = { models: list('models'), mcpServers: list('mcpServers') };
+  }
+
+  return { schemaVersion: 1, upstreams, models, mcpServers, agents };
+}
+
+/** `KEY=value` lines; `#` comments and blanks ignored. Values are not unquoted-parsed beyond trimming. */
+export function parseSecrets(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+export interface LoadedConfig {
+  config: GatewayConfig;
+  secrets: Record<string, string>;
+}
+
+export async function loadConfig(
+  configFilePath: string = configPath(),
+  secretsFilePath: string = secretsPath(),
+): Promise<LoadedConfig> {
+  const configFile = Bun.file(configFilePath);
+  if (!(await configFile.exists())) {
+    throw new GatewayConfigError(`no gateway policy at ${configFilePath}`);
+  }
+  const config = parseConfig(await configFile.text());
+  // Secrets are optional: a config whose upstreams need no credential (a local
+  // model server, say) is legitimate, and demanding the file would block it.
+  const secretsFile = Bun.file(secretsFilePath);
+  const secrets = (await secretsFile.exists()) ? parseSecrets(await secretsFile.text()) : {};
+  return { config, secrets };
+}
+
+/** The policy for one agent group: its own entry, else the `*` fallback. */
+export function policyFor(config: GatewayConfig, agentGroupId: string): AgentPolicy | null {
+  return config.agents[agentGroupId] ?? config.agents['*'] ?? null;
+}
+
+/** `["*"]` is the wildcard; otherwise membership is exact. */
+export function allows(list: readonly string[], name: string): boolean {
+  return list.includes('*') || list.includes(name);
+}
+
+/** The header a request to this upstream must carry, or null when it needs none. */
+export function authHeader(
+  auth: UpstreamAuth | undefined,
+  secrets: Record<string, string>,
+): { name: string; value: string } | null {
+  if (!auth) return null;
+  const secret = secrets[auth.secret];
+  if (!secret) {
+    throw new GatewayConfigError(`secret "${auth.secret}" is not set in secrets.env`);
+  }
+  return { name: auth.header, value: auth.format.replace('{value}', secret) };
+}

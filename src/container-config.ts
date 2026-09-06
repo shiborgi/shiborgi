@@ -405,8 +405,18 @@ function speedFields(speed: ContainerSpeed | undefined): Pick<ContainerConfig, '
  * Materialize `container.json` from the DB. Called at spawn time so the
  * container always sees fresh config. Returns the `ContainerConfig` for
  * use by the caller (buildMounts, composeSessionSpec, etc.).
+ *
+ * `transform` runs after the DB shape is built and BEFORE the file is written,
+ * for values that are only knowable at spawn time and must not be persisted —
+ * the gateway's DHCP-assigned address being the reason it exists. Taking it as
+ * a parameter keeps this module free of any knowledge of gateways: the spawn
+ * path already resolves one, and it is the caller that knows whether this
+ * install routes through it.
  */
-export async function materializeContainerJson(agentGroupId: string): Promise<ContainerConfig> {
+export async function materializeContainerJson(
+  agentGroupId: string,
+  transform?: (config: ContainerConfig) => void,
+): Promise<ContainerConfig> {
   const group = await getAgentGroup(agentGroupId);
   if (!group) throw new Error(`Agent group not found: ${agentGroupId}`);
 
@@ -414,6 +424,7 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
   if (!row) throw new Error(`Container config not found for agent group: ${agentGroupId}`);
 
   const config = configFromDb(row, group);
+  transform?.(config);
 
   const p = path.join(GROUPS_DIR, group.folder, 'container.json');
   const dir = path.dirname(p);

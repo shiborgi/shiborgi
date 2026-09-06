@@ -8,6 +8,7 @@ import { backfillContainerConfigs } from './backfill-container-configs.js';
 import { CENTRAL_DB_PATH } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
 import { adoptRunningSessions } from './container-runner.js';
+import { ensureEgressAtBoot } from './gateway-boot.js';
 import { closeDb, initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { getSessionDriver } from './drivers/index.js';
@@ -84,6 +85,18 @@ async function main(): Promise<void> {
   // restart. Adoption replaces the old reap-everything cleanup — a session that
   // is still running keeps running, and only true orphans are stopped.
   await getSessionDriver().ensureReady?.();
+
+  // 2b. Egress: the network agents are confined to, and the gateway that is
+  // their only way out. Brought up here so a fresh machine needs no manual
+  // step and a Mac that rebooted self-heals before the first message lands.
+  //
+  // Deliberately NOT fatal. The spawn path resolves the gateway again and
+  // fails closed there, so a gateway that is briefly unavailable at boot costs
+  // a retry rather than a host that will not start — and a host that will not
+  // start takes every channel adapter down with it, including the one an
+  // operator would use to ask what went wrong.
+  await ensureEgressAtBoot();
+
   await adoptRunningSessions();
 
   // 3. Channel adapters
