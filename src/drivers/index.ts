@@ -2,13 +2,17 @@
  * Driver selection.
  *
  * `NANOCLAW_RUNTIME_DRIVER` is read once, at first use, and defaults to
- * `docker` — so an install that never sets it behaves exactly as it did before
- * the seam existed. Nothing above this module may branch on the driver's
- * identity: features gate on `capabilities()`, never on `kind`.
+ * `apple-container`, this project's runtime. Nothing above this module may
+ * branch on the driver's identity: features gate on `capabilities()`, never on
+ * `kind`.
  *
  * Selection is a registry, not a switch. Drivers self-register by kind; this
- * module pre-registers `docker`, the only realization that ships here. An
- * overlay adds its own with one `registerSessionDriver(...)` call and one
+ * module pre-registers both realizations that ship here — `apple-container`
+ * and `docker`. Keeping Docker is not sentiment: it is the second
+ * implementation that makes `conformance.test.ts` a real floor rather than a
+ * description of whatever one driver happens to do, and it is the only
+ * portable path off macOS. An overlay adds its own with one
+ * `registerSessionDriver(...)` call and one
  * appended import — the same shape as the provider container-config barrel
  * (`src/providers/index.ts`) and the session-egress factory. Nothing outside
  * this file has to be rewritten to install a driver, so an overlay never has to
@@ -46,6 +50,12 @@ import { log } from '../log.js';
 import '../provider-contracts/index.js';
 import { protectedProviderDocumentSourcePaths } from '../provider-contracts/realize.js';
 
+import {
+  egressNetworkArgs as appleEgressNetworkArgs,
+  ensureEgressNetwork as ensureAppleEgressNetwork,
+} from '../apple-container-network.js';
+
+import { AppleContainerSessionDriver } from './apple-container-driver.js';
 import { DockerSessionDriver, agentContainerName } from './docker-driver.js';
 import {
   getSessionDriverFactory,
@@ -60,7 +70,16 @@ import './installed.js';
 import { withSessionEvents, type SessionEventsDriver } from './session-events.js';
 import type { MountPolicy, SessionDriver, SessionSpec } from './types.js';
 
-const DEFAULT_DRIVER_KIND = 'docker';
+/**
+ * Apple Container is this project's runtime: sessions run on a host-only
+ * network whose only reachable peer is the in-tree gateway, and that topology
+ * is the point of the install. Docker stays registered and fully supported —
+ * it is what the conformance floor measures every driver against, and the one
+ * portable path off macOS — but selecting it is now an explicit `.env` choice
+ * rather than what a fresh clone falls into.
+ */
+const DEFAULT_DRIVER_KIND = 'apple-container';
+const DOCKER_DRIVER_KIND = 'docker';
 
 const SETTINGS = ['NANOCLAW_RUNTIME_DRIVER', 'NANOCLAW_SESSION_MATERIAL_ROOT'] as const;
 
@@ -86,8 +105,29 @@ function dockerNetworkArgs(spec: SessionSpec): string[] {
 }
 
 registerSessionDriver(
-  DEFAULT_DRIVER_KIND,
+  DOCKER_DRIVER_KIND,
   (policy) => new DockerSessionDriver({ ...policy, networkArgsFor: dockerNetworkArgs }),
+);
+
+/**
+ * Apple Container's topology, decided at spawn: the install's own host-only
+ * network. `ensureAppleEgressNetwork` throws rather than returning a network a
+ * session could reach the internet through, so a spawn that cannot be
+ * contained never happens — the inbound message stays pending and the next
+ * sweep tick retries.
+ */
+function appleNetworkArgs(spec: SessionSpec): string[] {
+  const hostGateway = ensureAppleEgressNetwork();
+  log.info('Session egress confined to host-only network', {
+    containerName: agentContainerName(spec),
+    hostGateway,
+  });
+  return appleEgressNetworkArgs();
+}
+
+registerSessionDriver(
+  DEFAULT_DRIVER_KIND,
+  (policy) => new AppleContainerSessionDriver({ ...policy, networkArgsFor: appleNetworkArgs }),
 );
 
 export function configuredDriverKind(env: NodeJS.ProcessEnv = process.env): DriverKind {

@@ -16,6 +16,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { extraHarnesses, type ConformanceListRow } from './conformance-harness-registry.js';
+// Side-effect import: the barrel overlay drivers append their harness to.
+import './conformance-installed.js';
 import { DockerSessionDriver } from './docker-driver.js';
 import { FakeCli } from './fake-cli.js';
 import { withSessionEvents, type SessionEventsDriver } from './session-events.js';
@@ -52,6 +55,9 @@ type Harness = {
   realize(spec: SessionSpec): Promise<Realized>;
   /** Make the next realization fail with a runtime message of the given shape. */
   failWith(message: string): void;
+  unreachableMessage: string;
+  scriptExistingSession(key: SessionSpec['key']): void;
+  scriptSessions(rows: readonly ConformanceListRow[]): void;
 };
 
 function dockerHarness(): Harness {
@@ -97,13 +103,23 @@ function dockerHarness(): Harness {
         { match: /^create /, throws: new Error(message) },
       ];
     },
+    unreachableMessage: 'Cannot connect to the Docker daemon',
+    scriptExistingSession(key) {
+      cli.responses = [{ match: /^inspect /, output: `${key.installSlug}|${key.agentGroupId}|${key.sessionId}\n` }];
+    },
+    scriptSessions(rows) {
+      const output = rows.map((r) => `${r.name}|${r.state}|${r.agentGroupId}|${r.sessionId}`).join('\n');
+      cli.responses = [{ match: /^ps -a/, output: `${output}\n` }];
+    },
   };
 }
 
 let harnesses: Harness[];
 beforeEach(() => {
   vi.clearAllMocks();
-  harnesses = [dockerHarness()];
+  // Every registered harness runs every case. An overlay driver joins the
+  // floor by registering; it never gets a narrower suite of its own.
+  harnesses = [dockerHarness(), ...extraHarnesses()];
 });
 
 /**
@@ -608,7 +624,7 @@ describe('conformance: failure taxonomy', () => {
   });
 
   eachDriver('maps an unreachable runtime to runtime-unavailable', async (h) => {
-    h.failWith('Cannot connect to the Docker daemon');
+    h.failWith(h.unreachableMessage);
     await expect(h.driver.prepare(fixtureSpec())).rejects.toMatchObject({
       kind: 'runtime-unavailable',
       retryable: true,
@@ -625,7 +641,7 @@ describe('conformance: lifecycle', () => {
   eachDriver('prepare is idempotent on key', async (h) => {
     // An existing live session for this key IS the session — this is also how
     // adoption works.
-    h.cli.responses = [{ match: /^inspect /, output: 'spike|g1|s1\n' }];
+    h.scriptExistingSession(fixtureSpec().key);
 
     const first = await h.driver.prepare(fixtureSpec());
     const second = await h.driver.prepare(fixtureSpec());
@@ -673,7 +689,7 @@ describe('conformance: lifecycle', () => {
   });
 
   eachDriver('reconstructs adopted handles from labels alone', async (h) => {
-    h.cli.responses = [{ match: /^ps -a/, output: 'ncl-spike-s1|running|g1|s1\n' }];
+    h.scriptSessions([{ name: 'ncl-spike-s1', agentGroupId: 'g1', sessionId: 's1', state: 'running' }]);
 
     const snapshots = await h.driver.listSessions('spike');
 
@@ -686,12 +702,11 @@ describe('conformance: lifecycle', () => {
     // Fix 2's pinned behavior: adoption must tell adoptable sessions from
     // corpses (and from prepared-not-started incarnations) WITHOUT a
     // per-handle status() round trip.
-    h.cli.responses = [
-      {
-        match: /^ps -a/,
-        output: 'ncl-spike-s1|running|g1|s1\nncl-spike-s2|exited|g2|s2\nncl-spike-s3|created|g3|s3\n',
-      },
-    ];
+    h.scriptSessions([
+      { name: 'ncl-spike-s1', agentGroupId: 'g1', sessionId: 's1', state: 'running' },
+      { name: 'ncl-spike-s2', agentGroupId: 'g2', sessionId: 's2', state: 'exited' },
+      { name: 'ncl-spike-s3', agentGroupId: 'g3', sessionId: 's3', state: 'created' },
+    ]);
 
     const snapshots = await h.driver.listSessions('spike');
 
@@ -728,7 +743,13 @@ describe('conformance: capabilities are honest', () => {
   eachDriver('declares what it cannot realize', (h) => {
     const capabilities = h.driver.capabilities();
     expect(capabilities.isolationTiers).toContain('container');
-    expect(capabilities.unrealized).toEqual([]);
+    // NOT `toEqual([])`: the seam's rule is that a driver NAMES what it cannot
+    // realize, so demanding emptiness would fail every honest driver and pass
+    // only one that faked. What the floor can require is that the names are
+    // real spec fields rather than invented ones.
+    for (const field of capabilities.unrealized) {
+      expect(['memoryMb', 'cpus', 'pidsLimit', 'shmSizeMb']).toContain(field);
+    }
     expect(capabilities.admissionEnforced).toBe(false);
     expect(capabilities.networkPolicy).toBe('topology');
     expect(capabilities.sharedNetworkNamespace).toBe(false);
