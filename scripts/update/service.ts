@@ -196,7 +196,7 @@ export async function drainContainers(
   env: ServiceEnvironment,
   timeoutMs = 300_000,
 ): Promise<void> {
-  const runtime = process.env.CONTAINER_RUNTIME ?? 'docker';
+  const runtime = process.env.CONTAINER_RUNTIME ?? 'container';
   const label = `nanoclaw-install=${getInstallSlug(projectRoot)}`;
   const started = Date.now();
   while (true) {

@@ -57,8 +57,14 @@ function slug(root: string): string {
   return createHash('sha1').update(root).digest('hex').slice(0, 8);
 }
 
+let savedRuntime: string | undefined;
+
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  if (savedRuntime !== undefined) {
+    process.env.CONTAINER_RUNTIME = savedRuntime;
+    savedRuntime = undefined;
+  }
 });
 
 describe('service-mode detection and control', () => {
@@ -133,6 +139,10 @@ describe('service-mode detection and control', () => {
 
 describe('drain and health gates', () => {
   it('filters active containers by this install slug', async () => {
+    // `drainContainers` shells whatever CONTAINER_RUNTIME resolves to; this
+    // case is about the label filter, not which binary, so pin it explicitly.
+    savedRuntime = process.env.CONTAINER_RUNTIME;
+    process.env.CONTAINER_RUNTIME = 'docker';
     const root = temp();
     const label = `nanoclaw-install=${slug(root)}`;
     const { env, calls } = makeEnv('linux', {

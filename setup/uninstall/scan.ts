@@ -85,7 +85,7 @@ export function tilde(p: string, home: string): string {
 export function scanInstall(deps: ScanDeps): Inventory {
   const { projectRoot, home, runCommand } = deps;
   const slug = getInstallSlug(projectRoot);
-  const containerRuntime = process.env.CONTAINER_RUNTIME ?? 'docker';
+  const containerRuntime = process.env.CONTAINER_RUNTIME ?? 'container';
   const notes: string[] = [];
 
   const service = scanService(deps, slug, containerRuntime, notes);

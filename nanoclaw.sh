@@ -72,7 +72,7 @@ for arg in "$@"; do
     export NANOCLAW_PROJECT_ROOT="$PROJECT_ROOT"
     # shellcheck source=setup/lib/install-slug.sh
     source "$PROJECT_ROOT/setup/lib/install-slug.sh"
-    UNINSTALL_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+    UNINSTALL_RUNTIME="${CONTAINER_RUNTIME:-container}"
     echo "Can't run the uninstaller: dependencies are missing (node_modules/)."
     echo "Either re-run 'bash nanoclaw.sh' once to restore them, or clean up manually:"
     echo ""

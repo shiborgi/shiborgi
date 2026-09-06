@@ -11,15 +11,19 @@ import { detectExistingInstall, scanInstall, type ScanDeps } from './scan.js';
 
 let root: string;
 let home: string;
+let savedRuntime: string | undefined;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-scan-root-'));
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-scan-home-'));
+  savedRuntime = process.env.CONTAINER_RUNTIME;
 });
 
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
+  if (savedRuntime === undefined) delete process.env.CONTAINER_RUNTIME;
+  else process.env.CONTAINER_RUNTIME = savedRuntime;
 });
 
 /** Fake runCommand: unhandled commands fail (binary missing / daemon down). */
@@ -105,6 +109,9 @@ describe('scanInstall service artifacts', () => {
   });
 
   it('captures container ids and image when docker is up', () => {
+    // This scan path exercises the `docker`-specific fakes below; pin the
+    // runtime explicitly rather than relying on which one is the ambient default.
+    process.env.CONTAINER_RUNTIME = 'docker';
     const inv = scanInstall(deps({ runCommand: dockerUp(['abc123', 'def456'], true) }));
     expect(inv.service.containerIds).toEqual(['abc123', 'def456']);
     expect(inv.service.image).toMatch(/^nanoclaw-agent-v2-[0-9a-f]{8}:latest$/);
@@ -112,6 +119,7 @@ describe('scanInstall service artifacts', () => {
   });
 
   it('degrades with a manual-cleanup note when docker is unavailable', () => {
+    process.env.CONTAINER_RUNTIME = 'docker';
     const inv = scanInstall(deps());
     expect(inv.service.containerIds).toEqual([]);
     expect(inv.service.image).toBeUndefined();

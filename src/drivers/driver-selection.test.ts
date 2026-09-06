@@ -80,7 +80,7 @@ afterEach(() => {
 
 describe('configuredDriverKind', () => {
   it('defaults to docker when nothing is set anywhere', () => {
-    expect(configuredDriverKind({})).toBe('docker');
+    expect(configuredDriverKind({})).toBe('apple-container');
   });
 
   it('reads the selection from .env, not only from the process environment', () => {
@@ -185,7 +185,7 @@ describe('getSessionDriver', () => {
     resetSessionDriver(standIn);
     expect(getSessionDriver()).toBe(standIn);
     resetSessionDriver(null);
-    expect(getSessionDriver().kind).toBe('docker');
+    expect(getSessionDriver().kind).toBe('apple-container');
   });
 });
 

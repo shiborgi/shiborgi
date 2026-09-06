@@ -25,6 +25,8 @@
  */
 import { spawn, spawnSync } from 'child_process';
 import { randomUUID } from 'crypto';
+
+import { configuredGatewayProviderKind } from '../src/gateway-providers/index.js';
 import fs from 'fs';
 import * as os from 'os';
 import path from 'path';
@@ -313,7 +315,11 @@ async function main(): Promise<void> {
     maybeReexecUnderSg();
   }
 
-  if (!skip.has('onecli')) {
+  // OneCLI is the vault an install uses when its gateway is OneCLI. This
+  // install's default gateway is the in-tree one, which holds its credentials
+  // in `gateway/config/secrets.env` and needs no vault service — so the step
+  // is skipped unless the operator selected OneCLI explicitly.
+  if (!skip.has('onecli') && configuredGatewayProviderKind() === 'onecli') {
     p.log.message(
       brandBody(
         dimWrap(

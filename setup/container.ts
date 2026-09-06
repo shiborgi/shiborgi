@@ -69,8 +69,9 @@ async function tryStartDocker(): Promise<DockerStatus> {
 
 function parseArgs(args: string[]): { runtime: string } {
   // `--runtime` is still accepted for backwards compatibility with the /setup
-  // skill, but `docker` is the only supported value.
-  let runtime = 'docker';
+  // skill. Two values are supported: `container` (Apple Container, the
+  // default) and `docker`.
+  let runtime = process.env.CONTAINER_RUNTIME ?? 'container';
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--runtime' && args[i + 1]) {
       runtime = args[i + 1];
@@ -177,7 +178,7 @@ export async function run(args: string[]): Promise<void> {
   const image = getDefaultContainerImage(projectRoot);
   const logFile = path.join(projectRoot, 'logs', 'setup.log');
 
-  if (runtime !== 'docker') {
+  if (runtime !== 'docker' && runtime !== 'container') {
     emitStatus('SETUP_CONTAINER', {
       RUNTIME: runtime,
       IMAGE: image,
@@ -190,7 +191,42 @@ export async function run(args: string[]): Promise<void> {
     process.exit(4);
   }
 
-  if (!commandExists('docker')) {
+  if (runtime === 'container') {
+    // Apple Container needs none of the Docker plumbing below: no package
+    // install, no daemon socket, no group membership. Either the CLI is there
+    // and its service is up, or the operator installs it — there is no
+    // unattended install path worth guessing at for a macOS system component.
+    if (!commandExists('container')) {
+      emitStatus('SETUP_CONTAINER', {
+        RUNTIME: runtime,
+        IMAGE: image,
+        BUILD_OK: false,
+        TEST_OK: false,
+        STATUS: 'failed',
+        ERROR: 'runtime_not_available',
+        LOG: 'logs/setup.log',
+      });
+      process.exit(2);
+    }
+    if (spawnSync('container', ['system', 'status'], { encoding: 'utf-8' }).status !== 0) {
+      log.info('Apple Container service is not running — starting it');
+      spawnSync('container', ['system', 'start'], { stdio: 'inherit' });
+    }
+    if (spawnSync('container', ['system', 'status'], { encoding: 'utf-8' }).status !== 0) {
+      emitStatus('SETUP_CONTAINER', {
+        RUNTIME: runtime,
+        IMAGE: image,
+        BUILD_OK: false,
+        TEST_OK: false,
+        STATUS: 'failed',
+        ERROR: 'runtime_not_available',
+        LOG: 'logs/setup.log',
+      });
+      process.exit(2);
+    }
+  }
+
+  if (runtime === 'docker' && !commandExists('docker')) {
     log.info('Docker not found — running setup/install-docker.sh');
     try {
       execSync('bash setup/install-docker.sh', { cwd: projectRoot, stdio: 'inherit' });
@@ -199,7 +235,7 @@ export async function run(args: string[]): Promise<void> {
     }
   }
 
-  if (!commandExists('docker')) {
+  if (runtime === 'docker' && !commandExists('docker')) {
     emitStatus('SETUP_CONTAINER', {
       RUNTIME: runtime,
       IMAGE: image,
@@ -212,7 +248,7 @@ export async function run(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  {
+  if (runtime === 'docker') {
     let status = dockerStatus();
     if (status !== 'ok') {
       status = await tryStartDocker();
@@ -258,8 +294,8 @@ export async function run(args: string[]): Promise<void> {
     }
   }
 
-  const buildCmd = 'docker build';
-  const runCmd = 'docker';
+  const buildCmd = `${runtime} build`;
+  const runCmd = runtime;
 
   // Build-args from .env. Only INSTALL_CJK_FONTS is passed through today.
   // Keeps /setup and ./container/build.sh in sync — both read the same source.

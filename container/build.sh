@@ -58,7 +58,32 @@ while [ $# -gt 0 ]; do
 done
 
 TAG="${1:-latest}"
-CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-container}"
+
+# Apple Container builds inside a builder VM whose default allocation is 2 GB.
+# This image installs Chromium and several Node CLIs, and at 2 GB the build is
+# OOM-killed partway through with `cannot allocate memory` — a failure that
+# reads like a broken Dockerfile rather than an under-provisioned builder.
+# Raise it once, here, so a fresh clone does not have to discover this.
+BUILDER_MIN_MB=8192
+ensure_builder_capacity() {
+    local current
+    # `... CPUS MEMORY` where MEMORY prints as two fields ("8192 MB").
+    current="$(container builder status 2>/dev/null | awk 'NR==2 {print $(NF-1)}')"
+    case "$current" in
+        ''|*[!0-9]*) current=0 ;;
+    esac
+    if [ "$current" -ge "$BUILDER_MIN_MB" ]; then
+        return 0
+    fi
+    echo "Builder has ${current:-0} MB; restarting it with ${BUILDER_MIN_MB} MB for this build..."
+    container builder stop >/dev/null 2>&1 || true
+    container builder start --cpus 4 --memory "${BUILDER_MIN_MB}MB" >/dev/null 2>&1 \
+        || echo "Warning: could not resize the builder; the build may run out of memory." >&2
+}
+if [ "$CONTAINER_RUNTIME" = "container" ]; then
+    ensure_builder_capacity
+fi
 
 # No explicit subcommand, on an install that pulls its image. Skills that add a
 # runtime dependency land here — they append to cli-tools.json (or edit the
