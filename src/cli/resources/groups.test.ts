@@ -351,10 +351,13 @@ describe('groups config (host-only)', () => {
 
     beforeEach(async () => {
       await createAgentGroup({ id: GID, name: 's', folder: 's', agent_provider: null, created_at: now() });
-      await ensureContainerConfig(GID);
+      // Explicit, not "left on the instance default": the instance default is
+      // a separate, independently-changeable seam, and this describe block is
+      // about Claude's own declared tiers specifically.
+      await ensureContainerConfig(GID, 'claude');
     });
 
-    it('accepts each tier Claude declares for a group on the default provider', async () => {
+    it('accepts each tier Claude declares', async () => {
       for (const speed of ['standard', 'fast']) {
         expect((await setSpeed(speed)).ok).toBe(true);
         expect(await speedOf()).toBe(speed);

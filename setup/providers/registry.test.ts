@@ -48,3 +48,14 @@ describe('setup flow consumes the registry (structural)', () => {
     expect(src).toContain("'provider-auth'");
   });
 });
+
+describe('opencode setup provider', () => {
+  it('is registered directly (not through the installable-later descriptor path) with no Anthropic auth fallback', () => {
+    const opencode = getSetupProvider('opencode');
+    expect(opencode).toBeDefined();
+    // A defined runAuth is what keeps setup/auto.ts's `providerEntry?.runAuth`
+    // branch from falling back to the standard Claude/Anthropic auth flow —
+    // OpenCode's credentials live in the gateway, not in an Anthropic account.
+    expect(opencode!.runAuth).toBeDefined();
+  });
+});

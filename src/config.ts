@@ -30,15 +30,19 @@ const envConfig = readEnvFile([
  */
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
 
-// Instance-wide default agent provider for newly created groups. `claude` (the
-// built-in provider) when unset, so existing installs are unaffected on upgrade.
+// Instance-wide default agent provider for newly created groups. `opencode` —
+// this project's provider, already registered and imaged — for the same
+// reason the session driver and the gateway provider default away from their
+// upstream fallbacks (`drivers/index.ts`, `gateway-providers/index.ts`): a
+// fresh clone should not have to be told what it already is. `claude` remains
+// fully supported and one `.env` line away.
 // Applied only at group-creation time (stamped onto the config row) — never in
 // provider resolution — so existing groups are never retroactively flipped.
 // Per-group `ncl groups config update --provider` still overrides it.
 export const DEFAULT_AGENT_PROVIDER = (
   process.env.DEFAULT_AGENT_PROVIDER ||
   envConfig.DEFAULT_AGENT_PROVIDER ||
-  'claude'
+  'opencode'
 ).toLowerCase();
 
 // Instance-wide default model for agent containers, applied when the group has

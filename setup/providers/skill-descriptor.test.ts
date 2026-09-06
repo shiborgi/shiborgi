@@ -4,7 +4,7 @@ import path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { listSetupProviders } from './registry.js';
+import { getSetupProvider, listSetupProviders } from './registry.js';
 import {
   getInstallableProviderDescriptor,
   getProviderDescriptor,
@@ -37,15 +37,21 @@ describe('provider skill descriptors', () => {
     expect(providerImagePolicy('unknown-provider')).toBe('local-required');
   });
 
-  it('offers exactly Codex on trunk and keeps OpenCode out of the setup picker', () => {
+  it('offers exactly Codex through the installable-later path; OpenCode is registered directly, not fetched', () => {
     // The picker (setup/auto.ts askAgentProviderChoice) lists installed setup
-    // providers plus listInstallableProviderDescriptors(). OpenCode is a
-    // skill-only provider: hidden from the offer AND never registered with
-    // setup, so neither source can surface it.
+    // providers (listSetupProviders()) plus listInstallableProviderDescriptors().
+    // Codex reaches the picker through the second list: not yet applied, the
+    // wizard fetches and installs it on pick. OpenCode ships baked into this
+    // checkout (image built, both provider barrels wired), so it reaches the
+    // picker through the FIRST list instead (setup/providers/opencode.ts,
+    // registered directly) — it must stay out of the installable-later path,
+    // since picking it there would `import('./providers/opencode.js')` a file
+    // the skill deliberately never creates (see the two assertions below).
     expect(listInstallableProviderDescriptors().map((entry) => entry.value)).toEqual(['codex']);
     const opencode = listProviderDescriptors().find((entry) => entry.value === 'opencode');
     expect(opencode?.offered).toBe(false);
     expect(getInstallableProviderDescriptor('opencode')).toBeUndefined();
+    expect(getSetupProvider('opencode')).toBeDefined();
 
     const addOpencode = fs.readFileSync(path.join('.claude', 'skills', 'add-opencode', 'SKILL.md'), 'utf-8');
     expect(addOpencode).not.toMatch(/^```nc:append to:setup\/providers\/index\.ts/m);
