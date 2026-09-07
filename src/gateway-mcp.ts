@@ -50,6 +50,15 @@ export function routeMcpThroughGateway(
   const local: string[] = [];
 
   for (const [name, server] of Object.entries(servers)) {
+    if (server.type === 'gateway') {
+      out[name] = {
+        type: 'http',
+        url: gatewayMcpUrl(gatewayBaseUrl, server.route),
+        ...(server.instructions ? { instructions: server.instructions } : {}),
+      };
+      routed.push(server.route);
+      continue;
+    }
     if (server.type === 'http') {
       // `headers` is dropped deliberately: any credential it carried is the
       // gateway's to hold now, and leaving a stale one in the agent's config

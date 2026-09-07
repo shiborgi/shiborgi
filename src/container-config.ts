@@ -70,7 +70,14 @@ export interface McpHttpServerConfig {
   instructions?: string;
 }
 
-export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
+/** A named remote MCP route resolved only by the install gateway at spawn. */
+export interface McpGatewayServerConfig {
+  type: 'gateway';
+  route: string;
+  instructions?: string;
+}
+
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpGatewayServerConfig;
 
 /**
  * Query keys that name a credential. Keys are camelCase-normalized, then
@@ -132,8 +139,8 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
   // spelling of the internal "http".
   const type = input.type === 'streamable-http' ? 'http' : input.type;
   if (type === 'sse') throw new Error('unsupported transport "sse"');
-  if (type !== undefined && type !== 'stdio' && type !== 'http') {
-    throw new Error('type must be "stdio", "http", or "streamable-http"');
+  if (type !== undefined && type !== 'stdio' && type !== 'http' && type !== 'gateway') {
+    throw new Error('type must be "stdio", "http", "streamable-http", or "gateway"');
   }
   if (type === 'stdio' && !command) throw new Error('type "stdio" requires command');
   if (type === 'http' && !url) throw new Error('type "http" requires url');
@@ -141,6 +148,21 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
   const instructions = input.instructions;
   if (instructions !== undefined && typeof instructions !== 'string') {
     throw new Error('MCP instructions must be a string');
+  }
+
+  if (type === 'gateway') {
+    if (
+      command !== undefined ||
+      url !== undefined ||
+      input.args !== undefined ||
+      input.env !== undefined ||
+      input.headers !== undefined
+    ) {
+      throw new Error('type "gateway" requires only route (and optional instructions)');
+    }
+    const route = typeof input.route === 'string' ? input.route : '';
+    validateMcpServerName(route);
+    return { type: 'gateway', route, ...(instructions === undefined ? {} : { instructions }) };
   }
 
   if (url !== undefined) {

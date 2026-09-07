@@ -69,6 +69,12 @@ describe('routing', () => {
     expect(routed).toEqual([]);
   });
 
+  it('resolves an explicit gateway route without retaining an upstream URL', () => {
+    const { servers, routed } = routeMcpThroughGateway({ drive: { type: 'gateway', route: 'google-drive' } }, BASE);
+    expect(servers.drive).toEqual({ type: 'http', url: `${BASE}/mcp/google-drive` });
+    expect(routed).toEqual(['google-drive']);
+  });
+
   it('handles a mixed set without cross-contamination', () => {
     const { routed, local } = routeMcpThroughGateway(
       {

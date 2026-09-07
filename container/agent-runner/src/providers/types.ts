@@ -137,7 +137,9 @@ export type McpServerConfig =
        */
       cwd?: string;
     }
-  | { type: 'http'; url: string; headers?: Record<string, string> };
+  | { type: 'http'; url: string; headers?: Record<string, string> }
+  // Gateway routes are resolved by the host before this file reaches a provider.
+  | { type: 'gateway'; route: string };
 
 export interface AgentQuery {
   /** Push a follow-up message into the active query. */

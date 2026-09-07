@@ -29,6 +29,18 @@ export interface UpstreamAuth {
   secret: string;
 }
 
+export interface GoogleOAuthProfile {
+  provider: 'google';
+  /** Account which must complete the consent flow. */
+  expectedEmail: string;
+  clientIdSecret: string;
+  clientSecretSecret: string;
+  refreshTokenSecret: string;
+  scopes: string[];
+}
+
+export type McpAuth = UpstreamAuth | { kind: 'oauth2'; profile: string };
+
 export interface Upstream {
   /** Base URL including any version prefix, e.g. `https://api.anthropic.com/v1`. */
   baseUrl: string;
@@ -43,7 +55,7 @@ export interface ModelRoute {
 
 export interface McpRoute {
   url: string;
-  auth?: UpstreamAuth;
+  auth?: McpAuth;
 }
 
 export interface AgentPolicy {
@@ -58,6 +70,7 @@ export interface GatewayConfig {
   upstreams: Record<string, Upstream>;
   models: Record<string, ModelRoute>;
   mcpServers: Record<string, McpRoute>;
+  oauthProfiles: Record<string, GoogleOAuthProfile>;
   /** Keyed by agent group id. `*` is the fallback for a group with no entry. */
   agents: Record<string, AgentPolicy>;
 }
@@ -142,12 +155,31 @@ export function parseConfig(raw: string): GatewayConfig {
     models[alias] = { upstream, model: typeof entry.model === 'string' ? entry.model : undefined };
   }
 
+  const oauthProfiles: Record<string, GoogleOAuthProfile> = {};
+  for (const [name, value] of Object.entries(requireObject(doc.oauthProfiles ?? {}, 'oauthProfiles'))) {
+    const entry = requireObject(value, `oauthProfiles.${name}`);
+    if (entry.provider !== 'google') throw new GatewayConfigError(`oauthProfiles.${name}.provider must be "google"`);
+    const scopes = entry.scopes;
+    if (!Array.isArray(scopes) || scopes.some((scope) => typeof scope !== 'string' || !scope)) {
+      throw new GatewayConfigError(`oauthProfiles.${name}.scopes must be an array of non-empty strings`);
+    }
+    oauthProfiles[name] = {
+      provider: 'google', expectedEmail: requireString(entry.expectedEmail, `oauthProfiles.${name}.expectedEmail`),
+      clientIdSecret: requireString(entry.clientIdSecret, `oauthProfiles.${name}.clientIdSecret`),
+      clientSecretSecret: requireString(entry.clientSecretSecret, `oauthProfiles.${name}.clientSecretSecret`),
+      refreshTokenSecret: requireString(entry.refreshTokenSecret, `oauthProfiles.${name}.refreshTokenSecret`), scopes,
+    };
+  }
+
   const mcpServers: Record<string, McpRoute> = {};
   for (const [name, value] of Object.entries(requireObject(doc.mcpServers ?? {}, 'mcpServers'))) {
     const entry = requireObject(value, `mcpServers.${name}`);
     mcpServers[name] = {
       url: requireString(entry.url, `mcpServers.${name}.url`),
-      auth: parseAuth(entry.auth, `mcpServers.${name}.auth`),
+      auth:
+        typeof entry.auth === 'object' && entry.auth !== null && (entry.auth as Record<string, unknown>).kind === 'oauth2'
+          ? { kind: 'oauth2', profile: requireString((entry.auth as Record<string, unknown>).profile, `mcpServers.${name}.auth.profile`) }
+          : parseAuth(entry.auth, `mcpServers.${name}.auth`),
     };
   }
 
@@ -164,7 +196,12 @@ export function parseConfig(raw: string): GatewayConfig {
     agents[id] = { models: list('models'), mcpServers: list('mcpServers') };
   }
 
-  return { schemaVersion: 1, upstreams, models, mcpServers, agents };
+  for (const [name, route] of Object.entries(mcpServers)) {
+    if (route.auth && 'kind' in route.auth && !oauthProfiles[route.auth.profile]) {
+      throw new GatewayConfigError(`mcpServers.${name}.auth.profile "${route.auth.profile}" is not configured`);
+    }
+  }
+  return { schemaVersion: 1, upstreams, models, mcpServers, oauthProfiles, agents };
 }
 
 /** `KEY=value` lines; `#` comments and blanks ignored. Values are not unquoted-parsed beyond trimming. */

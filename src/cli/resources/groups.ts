@@ -454,7 +454,8 @@ registerResource({
       description:
         'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
         'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] ' +
-        'or --url <url> [--headers <json-object>] (HTTPS, or plain HTTP for localhost / host.docker.internal).',
+        'or --url <url> [--headers <json-object>] (HTTPS, or plain HTTP for localhost / host.docker.internal), ' +
+        'or --gateway-route <route> for a named gateway-owned MCP route.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
@@ -479,6 +480,8 @@ registerResource({
           args: args.args === undefined ? undefined : JSON.parse(String(args.args)),
           env: args.env === undefined ? undefined : JSON.parse(String(args.env)),
           headers: args.headers === undefined ? undefined : JSON.parse(String(args.headers)),
+          type: args['gateway-route'] === undefined ? undefined : 'gateway',
+          route: args['gateway-route'],
         });
         await updateContainerConfigJson(id, 'mcp_servers', servers);
 

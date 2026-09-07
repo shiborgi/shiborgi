@@ -29,15 +29,19 @@ cd "$PROJECT_ROOT"
 # The managed Slack experience is simply the default; the flag that once
 # enabled it is swallowed so older invocations keep working.
 _filtered_args=()
+NANOCLAW_GOOGLE_SKILL=false
 for arg in "$@"; do
   if [ "$arg" = "--slack-agents" ]; then
     :
+  elif [ "$arg" = "--google" ]; then
+    NANOCLAW_GOOGLE_SKILL=true
   else
     _filtered_args+=("$arg")
   fi
 done
 set -- ${_filtered_args[@]+"${_filtered_args[@]}"}
 unset _filtered_args
+export NANOCLAW_GOOGLE_SKILL
 
 # ─── --help: show usage without bootstrapping ──────────────────────────
 for arg in "$@"; do
@@ -48,11 +52,13 @@ for arg in "$@"; do
     echo "Usage: bash nanoclaw.sh [options]"
     echo ""
     echo "  --template-path <ref>  Create or update an agent from templates/<ref>"
+    echo "  --google               After setup, print the guided Google gateway integration command"
     echo "  --uninstall            Uninstall this NanoClaw copy"
     echo "  --help, -h             Show this help without installing dependencies"
     exit 0
   fi
 done
+
 
 # ─── --uninstall: short-circuit before any setup work ──────────────────
 # Never install dependencies just to uninstall. With the TS toolchain

@@ -804,6 +804,18 @@ async function main(): Promise<void> {
   setupLog.complete(Date.now() - RUN_START);
   phEmit('setup_completed', { duration_ms: Date.now() - RUN_START });
 
+  // Keep Google integration delivery in its skill. `nanoclaw.sh --google`
+  // deliberately does not duplicate OAuth or policy mutations in setup; it
+  // leaves the operator with the exact guided capability to invoke next.
+  if (process.env.NANOCLAW_GOOGLE_SKILL === 'true') {
+    note(
+      'Run `/add-google` in your coding agent, or from this checkout:\n' +
+        '`pnpm exec tsx setup/lib/skill-driver.ts .claude/skills/add-google`\n\n' +
+        'The skill configures OAuth, gateway policy, and selected agent groups.',
+      'Google Workspace',
+    );
+  }
+
   const dmTarget = channelDmLabel(channelChoice);
   if (wiringPending) {
     // No welcome DM exists yet — the one remaining action is the last thing

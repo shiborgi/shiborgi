@@ -34,6 +34,7 @@ import {
   type LoadedConfig,
 } from './config.js';
 import { bearerToken, verifyClientKey } from './identity.js';
+import { googleAccessToken } from './google-oauth.js';
 
 const PORT = Number(process.env.GATEWAY_PORT ?? 8080);
 
@@ -183,8 +184,13 @@ async function handleMcp(
   }
 
   const headers = forwardableHeaders(request);
-  const auth = authHeader(route.auth, secrets);
-  if (auth) headers.set(auth.name, auth.value);
+  if (route.auth && 'kind' in route.auth) {
+    const profile = config.oauthProfiles[route.auth.profile]!;
+    headers.set('authorization', `Bearer ${await googleAccessToken(route.auth.profile, profile, secrets)}`);
+  } else {
+    const auth = authHeader(route.auth, secrets);
+    if (auth) headers.set(auth.name, auth.value);
+  }
 
   const response = await fetch(`${route.url}${url.search}`, {
     method: request.method,

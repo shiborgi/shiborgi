@@ -17,7 +17,21 @@
     "cheap": { "upstream": "openrouter", "model": "deepseek/deepseek-chat" }
   },
 
-  "mcpServers": {},
+  "oauthProfiles": {
+    "google-primary": {
+      "provider": "google",
+      "expectedEmail": "you@example.com",
+      "clientIdSecret": "GOOGLE_OAUTH_CLIENT_ID",
+      "clientSecretSecret": "GOOGLE_OAUTH_CLIENT_SECRET",
+      "refreshTokenSecret": "GOOGLE_PRIMARY_REFRESH_TOKEN",
+      "scopes": ["openid", "email", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/calendar"]
+    }
+  },
+
+  "mcpServers": {
+    "google-drive": { "url": "https://drivemcp.googleapis.com/mcp/v1", "auth": { "kind": "oauth2", "profile": "google-primary" } },
+    "google-calendar": { "url": "https://calendarmcp.googleapis.com/mcp/v1", "auth": { "kind": "oauth2", "profile": "google-primary" } }
+  },
 
   "agents": {
     "*": { "models": ["*"], "mcpServers": ["*"] }
