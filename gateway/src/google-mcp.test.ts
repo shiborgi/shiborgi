@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'bun:test';
 
-import { GoogleApiError, type Fetcher, type GoogleRequest } from './google-api.js';
+import { callGoogle, GoogleApiError, type Fetcher, type GoogleRequest } from './google-api.js';
 import { handleBuiltinMcp } from './google-mcp.js';
 import { BUILTIN_TOOLS } from './google-tools.js';
 
@@ -217,5 +217,56 @@ describe('the access token', () => {
     const { tokens, fetcher } = recorder([{ id: 'f1', mimeType: 'text/plain' }, 'body']);
     await call('google-drive', 'read_file_content', { fileId: 'f1' }, fetcher);
     expect(tokens).toEqual(['test-access-token', 'test-access-token']);
+  });
+});
+
+/*
+ * `callGoogle` is the one place a real HTTP body is interpreted, and Drive is
+ * the API that returns something other than JSON on success: `alt=media` and
+ * `/export` return the file. Parsing those as JSON turned every read of a CSV
+ * or a plain-text note into "non-JSON success body" — a failure whose message
+ * pointed at the transport rather than at the caller's own request.
+ */
+describe('callGoogle body handling', () => {
+  const withFetch = async (response: Response, fn: () => Promise<unknown>): Promise<unknown> => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => response) as unknown as typeof fetch;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+
+  it('returns a file body verbatim when it is not JSON', async () => {
+    const csv = 'date,amount\n2026-09-10,42.00\n';
+    const body = await withFetch(new Response(csv, { headers: { 'content-type': 'text/csv' } }), () =>
+      callGoogle('t', { method: 'GET', url: 'https://example.test/f' }),
+    );
+    expect(body).toBe(csv);
+  });
+
+  it('parses a body Google labels as JSON', async () => {
+    const body = await withFetch(
+      new Response('{"id":"x"}', { headers: { 'content-type': 'application/json; charset=UTF-8' } }),
+      () => callGoogle('t', { method: 'GET', url: 'https://example.test/f' }),
+    );
+    expect(body).toEqual({ id: 'x' });
+  });
+
+  it('treats an empty body as success, which is what a delete returns', async () => {
+    const body = await withFetch(new Response('', { status: 204 }), () =>
+      callGoogle('t', { method: 'DELETE', url: 'https://example.test/f' }),
+    );
+    expect(body).toEqual({ ok: true });
+  });
+
+  it('surfaces the message from a Google error envelope', async () => {
+    const err = JSON.stringify({ error: { message: 'File not found: abc' } });
+    await expect(
+      withFetch(new Response(err, { status: 404, headers: { 'content-type': 'application/json' } }), () =>
+        callGoogle('t', { method: 'GET', url: 'https://example.test/f' }),
+      ),
+    ).rejects.toThrow('File not found: abc');
   });
 });

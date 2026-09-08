@@ -74,10 +74,17 @@ export async function callGoogle(accessToken: string, request: GoogleRequest): P
   }
   // 204 on delete, and an empty body is a valid success there.
   if (!text) return { ok: true };
+
+  // A non-JSON body is not an error here — it is the point. `alt=media` and
+  // `/export` return the file itself, so a CSV, a plain-text note or an
+  // exported Doc all arrive as text, and parsing them would fail on content
+  // the caller specifically asked for. Only a body Google labels as JSON is
+  // parsed; everything else is handed back verbatim.
+  if (!(response.headers.get('content-type') ?? '').includes('json')) return text;
   try {
     return JSON.parse(text);
   } catch {
-    throw new GoogleApiError('Google API returned a non-JSON success body', response.status);
+    throw new GoogleApiError('Google API returned a malformed JSON body', response.status);
   }
 }
 
