@@ -2,6 +2,10 @@
   "schemaVersion": 1,
 
   "upstreams": {
+    "zen-go": {
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "auth": { "header": "Authorization", "format": "Bearer {value}", "secret": "OPENCODE_ZEN_API_KEY" }
+    },
     "anthropic": {
       "baseUrl": "https://api.anthropic.com/v1",
       "auth": { "header": "x-api-key", "format": "{value}", "secret": "ANTHROPIC_API_KEY" }
@@ -13,8 +17,11 @@
   },
 
   "models": {
-    "default": { "upstream": "anthropic", "model": "claude-sonnet-5" },
-    "cheap": { "upstream": "openrouter", "model": "deepseek/deepseek-chat" }
+    "default": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
+    "cheap": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
+    "deepseek-v4-flash": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
+    "opencode-go/deepseek-v4-flash": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
+    "claude-sonnet-5": { "upstream": "anthropic", "model": "claude-sonnet-5" }
   },
 
   "oauthProfiles": {
@@ -34,6 +41,6 @@
   },
 
   "agents": {
-    "*": { "models": ["*"], "mcpServers": ["*"] }
+    "*": { "models": ["*"], "mcpServers": [] }
   }
 }
