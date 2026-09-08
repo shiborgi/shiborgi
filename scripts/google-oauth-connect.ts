@@ -1,6 +1,14 @@
 /**
  * Connect a configured Google OAuth profile without ever printing its token.
  * Usage: pnpm exec tsx scripts/google-oauth-connect.ts <profile>
+ *
+ * Headless hosts are the normal deployment, and Google's loopback flow needs a
+ * browser that can reach 127.0.0.1 on THIS host. So the callback port is
+ * settable (`GOOGLE_OAUTH_PORT`) — a random one cannot be forwarded before the
+ * script runs — and the URL is always printed before any attempt to open it.
+ * Opening a browser is best-effort: on a machine with none, the printed URL and
+ * an `ssh -L` tunnel are the whole procedure, and a failure to spawn a browser
+ * must not kill the run before the operator has seen the link.
  */
 import { createHash, randomBytes } from 'crypto';
 import { execFile } from 'child_process';
@@ -29,14 +37,29 @@ const state = randomBytes(32).toString('hex');
 const verifier = randomBytes(48).toString('base64url');
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 const server = http.createServer();
-await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+// 0 keeps the old behaviour (an ephemeral port) for a desktop run; a fixed one
+// is what makes `ssh -L` possible, since the tunnel must exist before Google
+// redirects to it.
+const requestedPort = Number(process.env.GOOGLE_OAUTH_PORT ?? '0');
+if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65535) {
+  throw new Error(`GOOGLE_OAUTH_PORT must be a port number (got ${String(process.env.GOOGLE_OAUTH_PORT)})`);
+}
+await new Promise<void>((resolve) => server.listen(requestedPort, '127.0.0.1', resolve));
 const port = (server.address() as { port: number }).port;
 const redirectUri = `http://127.0.0.1:${port}/oauth2/callback`;
 const scopes = Array.isArray(profile.scopes) ? profile.scopes.filter((x): x is string => typeof x === 'string') : [];
 const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
 authUrl.search = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, response_type: 'code', access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', scope: scopes.join(' '), state, code_challenge: challenge, code_challenge_method: 'S256' }).toString();
-console.log(`Opening Google sign-in for ${profile.expectedEmail}…`);
-await promisify(execFile)(process.platform === 'darwin' ? 'open' : 'xdg-open', [authUrl.toString()]);
+console.log(`\nSign in as ${profile.expectedEmail} at:\n\n${authUrl.toString()}\n`);
+console.log(`Google will redirect to ${redirectUri}, which is served by THIS host.`);
+console.log(`From a machine with a browser, forward the port first:\n  ssh -L ${port}:127.0.0.1:${port} <this-host>\n`);
+console.log('Waiting up to 5 minutes for the callback…');
+try {
+  await promisify(execFile)(process.platform === 'darwin' ? 'open' : 'xdg-open', [authUrl.toString()]);
+} catch {
+  // No browser on this host — the printed URL is the whole instruction, and
+  // dying here would take it off the screen along with the run.
+}
 const code = await new Promise<string>((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('OAuth timed out after 5 minutes')), 300_000);
   server.once('request', (req, res) => {
