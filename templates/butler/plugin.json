@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "butler",
+  "version": "1.0.0",
+  "description": "Personal assistant: household calendar, files, and the personal financial Book in Lastro.",
+  "extensions": {
+    "ai.nanoco.nanoclaw": { "agentName": "Butler" }
+  }
+}
