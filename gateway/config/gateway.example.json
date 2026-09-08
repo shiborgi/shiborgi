@@ -1,29 +1,53 @@
 {
   "schemaVersion": 1,
-
   "upstreams": {
     "zen-go": {
       "baseUrl": "https://opencode.ai/zen/go/v1",
-      "auth": { "header": "Authorization", "format": "Bearer {value}", "secret": "OPENCODE_ZEN_API_KEY" }
+      "auth": {
+        "header": "Authorization",
+        "format": "Bearer {value}",
+        "secret": "OPENCODE_ZEN_API_KEY"
+      }
     },
     "anthropic": {
       "baseUrl": "https://api.anthropic.com/v1",
-      "auth": { "header": "x-api-key", "format": "{value}", "secret": "ANTHROPIC_API_KEY" }
+      "auth": {
+        "header": "x-api-key",
+        "format": "{value}",
+        "secret": "ANTHROPIC_API_KEY"
+      }
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api/v1",
-      "auth": { "header": "Authorization", "format": "Bearer {value}", "secret": "OPENROUTER_API_KEY" }
+      "auth": {
+        "header": "Authorization",
+        "format": "Bearer {value}",
+        "secret": "OPENROUTER_API_KEY"
+      }
     }
   },
-
   "models": {
-    "default": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
-    "cheap": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
-    "deepseek-v4-flash": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
-    "opencode-go/deepseek-v4-flash": { "upstream": "zen-go", "model": "deepseek-v4-flash" },
-    "claude-sonnet-5": { "upstream": "anthropic", "model": "claude-sonnet-5" }
+    "default": {
+      "upstream": "zen-go",
+      "model": "deepseek-v4-flash"
+    },
+    "cheap": {
+      "upstream": "zen-go",
+      "model": "deepseek-v4-flash"
+    },
+    "deepseek-v4-flash": {
+      "upstream": "zen-go",
+      "model": "deepseek-v4-flash"
+    },
+    "opencode-go/deepseek-v4-flash": {
+      "upstream": "zen-go",
+      "model": "deepseek-v4-flash"
+    },
+    "claude-sonnet-5": {
+      "upstream": "anthropic",
+      "model": "claude-sonnet-5"
+    }
   },
-
   "oauthProfiles": {
     "google-primary": {
       "provider": "google",
@@ -31,16 +55,44 @@
       "clientIdSecret": "GOOGLE_OAUTH_CLIENT_ID",
       "clientSecretSecret": "GOOGLE_OAUTH_CLIENT_SECRET",
       "refreshTokenSecret": "GOOGLE_PRIMARY_REFRESH_TOKEN",
-      "scopes": ["openid", "email", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/calendar"]
+      "scopes": [
+        "openid",
+        "email",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/tasks"
+      ]
     }
   },
-
   "mcpServers": {
-    "google-drive": { "url": "https://drivemcp.googleapis.com/mcp/v1", "auth": { "kind": "oauth2", "profile": "google-primary" } },
-    "google-calendar": { "url": "https://calendarmcp.googleapis.com/mcp/v1", "auth": { "kind": "oauth2", "profile": "google-primary" } }
+    "google-drive": {
+      "builtin": "google-drive",
+      "auth": {
+        "kind": "oauth2",
+        "profile": "google-primary"
+      }
+    },
+    "google-calendar": {
+      "builtin": "google-calendar",
+      "auth": {
+        "kind": "oauth2",
+        "profile": "google-primary"
+      }
+    },
+    "google-tasks": {
+      "builtin": "google-tasks",
+      "auth": {
+        "kind": "oauth2",
+        "profile": "google-primary"
+      }
+    }
   },
-
   "agents": {
-    "*": { "models": ["*"], "mcpServers": [] }
+    "*": {
+      "models": [
+        "*"
+      ],
+      "mcpServers": []
+    }
   }
 }

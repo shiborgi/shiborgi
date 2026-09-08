@@ -35,6 +35,7 @@ import {
 } from './config.js';
 import { bearerToken, verifyClientKey } from './identity.js';
 import { googleAccessToken } from './google-oauth.js';
+import { handleBuiltinMcp } from './google-mcp.js';
 
 const PORT = Number(process.env.GATEWAY_PORT ?? 8080);
 
@@ -181,6 +182,27 @@ async function handleMcp(
   }
   if (!allows(policy.mcpServers, name)) {
     return apiError(403, `Agent group ${agentGroupId} may not use MCP server "${name}"`, 'permission_error');
+  }
+
+  // A built-in server is answered here rather than proxied: the gateway holds
+  // the OAuth profile already, so there is nothing to forward it to.
+  if (route.builtin) {
+    if (!route.auth || !('kind' in route.auth)) {
+      return apiError(500, `MCP server "${name}" is built-in but has no OAuth profile`, 'api_error');
+    }
+    const profileName = route.auth.profile;
+    const profile = config.oauthProfiles[profileName]!;
+    if (request.method !== 'POST') {
+      return apiError(405, 'Built-in MCP servers accept POST only', 'invalid_request_error');
+    }
+    const message = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!message) return apiError(400, 'Body must be a JSON-RPC message', 'invalid_request_error');
+    const answer = await handleBuiltinMcp(route.builtin, message, {
+      accessToken: () => googleAccessToken(profileName, profile, secrets),
+    });
+    // A notification gets 202 and no body, per the Streamable HTTP transport.
+    if (answer === null) return new Response(null, { status: 202 });
+    return new Response(JSON.stringify(answer), { headers: { 'content-type': 'application/json' } });
   }
 
   const headers = forwardableHeaders(request);

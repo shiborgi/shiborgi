@@ -18,6 +18,7 @@
  * rotating a key takes effect on the next call instead of requiring a restart
  * that would drop in-flight sessions.
  */
+import { BUILTIN_NAMES as BUILTIN_MCP_NAMES } from './google-tools.js';
 
 /** How a credential is presented to an upstream. */
 export interface UpstreamAuth {
@@ -54,7 +55,15 @@ export interface ModelRoute {
 }
 
 export interface McpRoute {
-  url: string;
+  /** A proxied server. Exactly one of `url` or `builtin` is set. */
+  url?: string;
+  /**
+   * A server the gateway implements itself (see google-mcp.ts). Chosen over a
+   * hosted URL where the hosted one is gated or absent: Google's Drive and
+   * Calendar MCP servers require Workspace Developer Preview enrolment, and
+   * Tasks has none at all, while the REST APIs beneath them are general.
+   */
+  builtin?: string;
   auth?: McpAuth;
 }
 
@@ -174,8 +183,19 @@ export function parseConfig(raw: string): GatewayConfig {
   const mcpServers: Record<string, McpRoute> = {};
   for (const [name, value] of Object.entries(requireObject(doc.mcpServers ?? {}, 'mcpServers'))) {
     const entry = requireObject(value, `mcpServers.${name}`);
+    const builtin = typeof entry.builtin === 'string' ? entry.builtin : undefined;
+    if (builtin !== undefined && entry.url !== undefined) {
+      throw new GatewayConfigError(`mcpServers.${name} sets both url and builtin; use exactly one`);
+    }
+    if (builtin !== undefined && !BUILTIN_MCP_NAMES.includes(builtin)) {
+      throw new GatewayConfigError(
+        `mcpServers.${name}.builtin "${builtin}" is not a built-in server (${BUILTIN_MCP_NAMES.join(', ')})`,
+      );
+    }
     mcpServers[name] = {
-      url: requireString(entry.url, `mcpServers.${name}.url`),
+      ...(builtin === undefined
+        ? { url: requireString(entry.url, `mcpServers.${name}.url`) }
+        : { builtin }),
       auth:
         typeof entry.auth === 'object' && entry.auth !== null && (entry.auth as Record<string, unknown>).kind === 'oauth2'
           ? { kind: 'oauth2', profile: requireString((entry.auth as Record<string, unknown>).profile, `mcpServers.${name}.auth.profile`) }
