@@ -14,7 +14,12 @@
  */
 import { createHash } from 'node:crypto';
 
-import { mcpServerPluginOwner, parseMcpServerConfig, validateMcpServerName } from '../../container-config.js';
+import {
+  isStdioMcpServer,
+  mcpServerPluginOwner,
+  parseMcpServerConfig,
+  validateMcpServerName,
+} from '../../container-config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { log } from '../../log.js';
@@ -159,13 +164,13 @@ export async function validateAddMcpServer(content: Record<string, unknown>, ses
   // it against the plugin root, which approval-added servers never have — it
   // would be silently dropped). Rejecting keeps the card honest: an approver
   // must never sign a working directory that won't take effect.
-  if (serverConfig.type !== 'http' && serverConfig.cwd !== undefined) {
+  if (isStdioMcpServer(serverConfig) && serverConfig.cwd !== undefined) {
     await notifyAgent(session, 'add_mcp_server failed: cwd is only supported for plugin-shipped servers.');
     return false;
   }
 
-  const args = serverConfig.type === 'http' ? [] : (serverConfig.args ?? []);
-  const env = serverConfig.type === 'http' ? {} : (serverConfig.env ?? {});
+  const args = isStdioMcpServer(serverConfig) ? (serverConfig.args ?? []) : [];
+  const env = isStdioMcpServer(serverConfig) ? (serverConfig.env ?? {}) : {};
 
   if (args.length > MAX_MCP_ARGS) {
     await notifyAgent(session, `add_mcp_server failed: max ${MAX_MCP_ARGS} args per server.`);
@@ -218,6 +223,15 @@ export async function requestAddMcpServerHold(content: Record<string, unknown>, 
       );
       fields.push(`headers: ${escapeInvisibles(JSON.stringify(displayHeaders))}`);
     }
+  } else if (serverConfig.type === 'gateway') {
+    // A gateway server carries only a route name: the URL and its credential
+    // live on the gateway and never reach this card, which is the point of
+    // that variant. Show the route, because that is the whole decision.
+    fields = [
+      `name: ${escapeInvisibles(JSON.stringify(serverName))}`,
+      `type: ${escapeInvisibles(JSON.stringify(serverConfig.type))}`,
+      `route: ${escapeInvisibles(JSON.stringify(serverConfig.route))}`,
+    ];
   } else {
     const args = serverConfig.args ?? [];
     const env = serverConfig.env ?? {};

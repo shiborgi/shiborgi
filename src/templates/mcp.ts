@@ -11,7 +11,12 @@
 import fs from 'fs';
 import path from 'path';
 
-import { parseMcpServerConfig, validateMcpServerName, type McpServerConfig } from '../container-config.js';
+import {
+  isStdioMcpServer,
+  parseMcpServerConfig,
+  validateMcpServerName,
+  type McpServerConfig,
+} from '../container-config.js';
 import { SECRET_ENV_KEY_RE, SECRET_VALUE_RE } from '../modules/self-mod/request.js';
 import { MCP_SCHEMA_URL } from './manifest.js';
 
@@ -41,7 +46,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 export function pluginDataCwdSubpaths(servers: Record<string, McpServerConfig>): string[] {
   const prefix = '${PLUGIN_DATA}/';
   return Object.values(servers).flatMap((s) =>
-    s.type !== 'http' && s.cwd?.startsWith(prefix) ? [s.cwd.slice(prefix.length)] : [],
+    isStdioMcpServer(s) && s.cwd?.startsWith(prefix) ? [s.cwd.slice(prefix.length)] : [],
   );
 }
 
@@ -136,6 +141,11 @@ function readServerEntry(name: string, entry: unknown, report: string[]): McpSer
     lintSecrets(name, 'header', server.headers ?? {}, report);
     return server;
   }
+
+  // A manifest declares stdio or streamable-http (checked above), so a gateway
+  // route cannot arrive here. Restate it as a guard rather than a cast: the
+  // union is shared with the CLI and self-mod paths, where gateway is valid.
+  if (!isStdioMcpServer(server)) return 'type must be "stdio" or "streamable-http"';
 
   // command is a single token: a bare executable name or a ./-relative path
   // resolved against PLUGIN_ROOT inside the container. No shell strings, no

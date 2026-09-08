@@ -474,14 +474,19 @@ registerResource({
               'update the plugin and restamp it (`ncl groups create --template <ref> --yes`) instead of editing it directly',
           );
         }
+        // `parseArgs` normalizes every `--hyphen-flag` to an underscore key
+        // before a handler sees it, so the hyphen spelling alone never
+        // matches and `--gateway-route` reads as absent. Accept both, as the
+        // other multiword flags on this resource do.
+        const gatewayRoute = args.gateway_route ?? args['gateway-route'];
         servers[name] = parseMcpServerConfig({
           command: args.command,
           url: args.url,
           args: args.args === undefined ? undefined : JSON.parse(String(args.args)),
           env: args.env === undefined ? undefined : JSON.parse(String(args.env)),
           headers: args.headers === undefined ? undefined : JSON.parse(String(args.headers)),
-          type: args['gateway-route'] === undefined ? undefined : 'gateway',
-          route: args['gateway-route'],
+          type: gatewayRoute === undefined ? undefined : 'gateway',
+          route: gatewayRoute,
         });
         await updateContainerConfigJson(id, 'mcp_servers', servers);
 

@@ -80,6 +80,16 @@ export interface McpGatewayServerConfig {
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpGatewayServerConfig;
 
 /**
+ * stdio is the only variant whose `type` may be absent: the CLI infers it from
+ * `command`, so legacy stored entries carry no discriminant. Testing for the
+ * variants that DO name themselves is therefore the only narrowing that keeps
+ * those entries — `type === 'stdio'` would silently drop them.
+ */
+export function isStdioMcpServer(server: McpServerConfig): server is McpStdioServerConfig {
+  return server.type !== 'http' && server.type !== 'gateway';
+}
+
+/**
  * Query keys that name a credential. Keys are camelCase-normalized, then
  * matched as whole words between [_.-] separators: `author` never matches
  * `auth`, but `authToken`, `clientSecret`, and `x-auth` all do. A match
@@ -315,13 +325,13 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
       const server = parseMcpServerConfig(entry as Record<string, unknown>);
       const pluginRoot = (entry as Record<string, unknown>).pluginRoot;
       if (
-        server.type !== 'http' &&
+        isStdioMcpServer(server) &&
         typeof pluginRoot === 'string' &&
         pluginRoot.startsWith(`${CONTAINER_PLUGINS_DIR}/`)
       ) {
         server.pluginRoot = pluginRoot;
       }
-      if (server.type !== 'http' && server.cwd && !server.pluginRoot) {
+      if (isStdioMcpServer(server) && server.cwd && !server.pluginRoot) {
         // cwd resolves against a plugin root; without provenance nothing can
         // resolve it. This strip is the ONLY layer (the runtime passes
         // provenance-less servers through untouched), and the breadcrumb

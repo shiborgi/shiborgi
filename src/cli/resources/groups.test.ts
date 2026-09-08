@@ -441,3 +441,44 @@ describe('groups config (host-only)', () => {
     });
   });
 });
+
+/*
+ * `--gateway-route` is the only way to register an MCP server whose URL and
+ * credential stay on the gateway, so it has to survive the dispatcher. The
+ * bug it guards: `parseArgs` normalizes every `--hyphen-flag` to an
+ * underscore key, and the handler read only the hyphen spelling — so the flag
+ * always read as absent and the command failed with "Provide exactly one of
+ * command or url", naming two flags the caller had deliberately not passed.
+ */
+describe('groups config add-mcp-server --gateway-route', () => {
+  beforeEach(async () => {
+    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+    fs.mkdirSync(TEST_DIR, { recursive: true });
+    await runMigrations(await initTestDb());
+  });
+  afterEach(async () => {
+    await closeDb();
+    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('registers a gateway route carrying no URL and no credential', async () => {
+    const GID = 'ag-gw';
+    await createAgentGroup({ id: GID, name: 'g', folder: 'g', agent_provider: null, created_at: now() });
+    await ensureContainerConfig(GID);
+
+    const res = await dispatch(
+      {
+        id: 'r1',
+        command: 'groups-config-add-mcp-server',
+        args: { id: GID, name: 'lastro', 'gateway-route': 'lastro' },
+      },
+      { caller: 'host' },
+    );
+
+    expect(errorMessage(res)).toBeUndefined();
+    expect(JSON.parse((await getContainerConfig(GID))!.mcp_servers).lastro).toEqual({
+      type: 'gateway',
+      route: 'lastro',
+    });
+  });
+});

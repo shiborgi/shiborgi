@@ -137,9 +137,12 @@ export type McpServerConfig =
        */
       cwd?: string;
     }
-  | { type: 'http'; url: string; headers?: Record<string, string> }
-  // Gateway routes are resolved by the host before this file reaches a provider.
-  | { type: 'gateway'; route: string };
+  | { type: 'http'; url: string; headers?: Record<string, string> };
+// A gateway route never appears here. The host resolves it to an http entry
+// pointing at the gateway, or — on an install with no gateway to resolve it —
+// drops it before container.json is written (gateway-mcp-transform.ts). So a
+// server in this config is always one a provider can actually reach, and
+// `type !== 'http'` stays a sound narrowing to stdio.
 
 export interface AgentQuery {
   /** Push a follow-up message into the active query. */

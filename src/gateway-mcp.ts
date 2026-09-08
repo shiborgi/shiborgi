@@ -44,6 +44,17 @@ export function gatewayMcpUrl(gatewayBaseUrl: string, name: string): string {
 export function routeMcpThroughGateway(
   servers: Record<string, McpServerConfig>,
   gatewayBaseUrl: string,
+  /**
+   * The session's own `Authorization` value. The gateway authenticates every
+   * request, `/mcp/<name>` included, so a rewritten entry that carried no
+   * header would be answered with 401 and the tool would silently never
+   * appear — which is exactly what happened before this was threaded through.
+   *
+   * This is the agent's own identity, not an upstream credential: the same
+   * token already rides its environment, and it proves only which agent group
+   * is calling. The MCP server's real bearer stays on the gateway.
+   */
+  authorization: string,
 ): McpRoutingResult {
   const out: Record<string, McpServerConfig> = {};
   const routed: string[] = [];
@@ -54,18 +65,23 @@ export function routeMcpThroughGateway(
       out[name] = {
         type: 'http',
         url: gatewayMcpUrl(gatewayBaseUrl, server.route),
+        headers: { Authorization: authorization },
         ...(server.instructions ? { instructions: server.instructions } : {}),
       };
       routed.push(server.route);
       continue;
     }
     if (server.type === 'http') {
-      // `headers` is dropped deliberately: any credential it carried is the
-      // gateway's to hold now, and leaving a stale one in the agent's config
-      // would put a secret in a file the agent can read for no benefit.
+      // The configured `headers` are dropped deliberately: any credential they
+      // carried is the gateway's to hold now, and leaving a stale one in the
+      // agent's config would put a secret in a file the agent can read for no
+      // benefit. What replaces them is the session's own bearer, which is not
+      // a secret from this agent — it is how the gateway knows which agent is
+      // calling.
       out[name] = {
         type: 'http',
         url: gatewayMcpUrl(gatewayBaseUrl, name),
+        headers: { Authorization: authorization },
         ...(server.plugin ? { plugin: server.plugin } : {}),
         ...(server.instructions ? { instructions: server.instructions } : {}),
       };
@@ -79,13 +95,39 @@ export function routeMcpThroughGateway(
   return { servers: out, routed, local };
 }
 
+/**
+ * Drop gateway routes on an install that has no gateway to resolve them.
+ *
+ * A route names a server the gateway holds the URL and credential for. Where
+ * there is no gateway, nothing can dial it: materializing it would hand the
+ * container an entry with neither a command nor a URL, and the agent would
+ * meet it as a tool that exists and always fails. Dropping it here is what
+ * lets every consumer downstream — this host, the container, each provider —
+ * treat "a server in container.json" as "a server something can reach".
+ */
+export function stripUnroutableGatewayServers(
+  config: { mcpServers: Record<string, McpServerConfig> },
+  agentGroupId: string,
+): void {
+  const dropped: string[] = [];
+  const kept: Record<string, McpServerConfig> = {};
+  for (const [name, server] of Object.entries(config.mcpServers)) {
+    if (server.type === 'gateway') dropped.push(name);
+    else kept[name] = server;
+  }
+  if (dropped.length === 0) return;
+  config.mcpServers = kept;
+  log.warn('Dropping gateway MCP routes on an install with no gateway', { agentGroupId, dropped });
+}
+
 /** Apply the routing to a config object in place, and say what happened. */
 export function applyMcpRouting(
   config: { mcpServers: Record<string, McpServerConfig> },
   gatewayBaseUrl: string,
   agentGroupId: string,
+  authorization: string,
 ): void {
-  const { servers, routed, local } = routeMcpThroughGateway(config.mcpServers, gatewayBaseUrl);
+  const { servers, routed, local } = routeMcpThroughGateway(config.mcpServers, gatewayBaseUrl, authorization);
   config.mcpServers = servers;
   if (routed.length > 0 || local.length > 0) {
     log.info('MCP servers resolved for session', { agentGroupId, viaGateway: routed, insideContainer: local });
