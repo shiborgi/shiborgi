@@ -235,6 +235,10 @@ Everything else (new capabilities, OS compatibility, hardware support, enhanceme
 
 This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
 
++## Gmail → WhatsApp relay
+
+The gateway can receive Gmail Pub/Sub notifications at `/webhooks/gmail/<relay-id>`. Configure an `emailRelays` entry in `gateway/config/gateway.json`, grant the OAuth profile `https://www.googleapis.com/auth/gmail.readonly`, set `EMAIL_RELAY_SECRET` in the host environment, and point the relay destination at an existing WhatsApp `messaging_group` JID. Messages are filtered by sender/domain/subject/labels, deduplicated by Gmail `messageId`, truncated to 12,000 characters, and delivered through the normal WhatsApp adapter.
+
 ## Community
 
 Questions? Ideas? [Join the Discord](https://discord.gg/VDdww8qS42).

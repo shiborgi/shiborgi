@@ -36,6 +36,7 @@ import {
 import { bearerToken, verifyClientKey } from './identity.js';
 import { googleAccessToken } from './google-oauth.js';
 import { handleBuiltinMcp } from './google-mcp.js';
+import { handleEmailRelay } from './email-relay.js';
 
 const PORT = Number(process.env.GATEWAY_PORT ?? 8080);
 
@@ -235,6 +236,17 @@ export async function handle(request: Request): Promise<Response> {
 
   if (!installSecret()) {
     return apiError(500, 'Gateway has no NANOCLAW_GATEWAY_SECRET; it cannot identify callers', 'api_error');
+  }
+
+  const relay = /^\/webhooks\/gmail\/([A-Za-z0-9_-]{1,64})$/.exec(url.pathname);
+  if (relay) {
+    try {
+      const loaded = await loadConfig();
+      return await handleEmailRelay(request, loaded, relay[1]!);
+    } catch (error) {
+      console.error('[gateway] email relay failed', error);
+      return apiError(502, 'email relay failed', 'api_error');
+    }
   }
 
   const identity = authenticate(request);

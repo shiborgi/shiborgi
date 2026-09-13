@@ -74,6 +74,25 @@ export interface AgentPolicy {
   mcpServers: string[];
 }
 
+export interface EmailRelayFilter {
+  from?: string[];
+  domains?: string[];
+  subjectRegex?: string[];
+  labels?: string[];
+}
+
+export interface EmailRelay {
+  provider: 'gmail';
+  oauthProfile: string;
+  mailbox: string;
+  pubsubAudience: string;
+  butlerEndpoint: string;
+  deliverySecret: string;
+  filters: EmailRelayFilter;
+  destination: { channelType: 'whatsapp'; instance?: string; platformId: string };
+  limits: { maxBodyChars: number; maxMessagesPerEvent: number };
+}
+
 export interface GatewayConfig {
   schemaVersion: number;
   upstreams: Record<string, Upstream>;
@@ -82,6 +101,7 @@ export interface GatewayConfig {
   oauthProfiles: Record<string, GoogleOAuthProfile>;
   /** Keyed by agent group id. `*` is the fallback for a group with no entry. */
   agents: Record<string, AgentPolicy>;
+  emailRelays: Record<string, EmailRelay>;
 }
 
 export class GatewayConfigError extends Error {
@@ -216,12 +236,43 @@ export function parseConfig(raw: string): GatewayConfig {
     agents[id] = { models: list('models'), mcpServers: list('mcpServers') };
   }
 
+  const emailRelays: Record<string, EmailRelay> = {};
+  for (const [id, value] of Object.entries(requireObject(doc.emailRelays ?? {}, 'emailRelays'))) {
+    const entry = requireObject(value, `emailRelays.${id}`);
+    if (entry.provider !== 'gmail') throw new GatewayConfigError(`emailRelays.${id}.provider must be "gmail"`);
+    const oauthProfile = requireString(entry.oauthProfile, `emailRelays.${id}.oauthProfile`);
+    if (!oauthProfiles[oauthProfile]) throw new GatewayConfigError(`emailRelays.${id}.oauthProfile is not configured`);
+    const destination = requireObject(entry.destination, `emailRelays.${id}.destination`);
+    if (destination.channelType !== 'whatsapp') throw new GatewayConfigError(`emailRelays.${id}.destination.channelType must be "whatsapp"`);
+    const filters = requireObject(entry.filters ?? {}, `emailRelays.${id}.filters`);
+    const list = (field: string): string[] | undefined => {
+      const raw = filters[field];
+      if (raw === undefined) return undefined;
+      if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string' || !v)) throw new GatewayConfigError(`emailRelays.${id}.filters.${field} must be an array of strings`);
+      return raw as string[];
+    };
+    const limits = requireObject(entry.limits ?? {}, `emailRelays.${id}.limits`);
+    const maxBodyChars = limits.maxBodyChars === undefined ? 12000 : typeof limits.maxBodyChars === 'number' ? limits.maxBodyChars : NaN;
+    const maxMessagesPerEvent = limits.maxMessagesPerEvent === undefined ? 20 : typeof limits.maxMessagesPerEvent === 'number' ? limits.maxMessagesPerEvent : NaN;
+    if (!Number.isInteger(maxBodyChars) || maxBodyChars < 1 || maxBodyChars > 100000) throw new GatewayConfigError(`emailRelays.${id}.limits.maxBodyChars is invalid`);
+    if (!Number.isInteger(maxMessagesPerEvent) || maxMessagesPerEvent < 1 || maxMessagesPerEvent > 100) throw new GatewayConfigError(`emailRelays.${id}.limits.maxMessagesPerEvent is invalid`);
+    emailRelays[id] = {
+      provider: 'gmail', oauthProfile, mailbox: requireString(entry.mailbox ?? 'me', `emailRelays.${id}.mailbox`),
+      pubsubAudience: requireString(entry.pubsubAudience, `emailRelays.${id}.pubsubAudience`),
+      butlerEndpoint: requireString(entry.butlerEndpoint, `emailRelays.${id}.butlerEndpoint`),
+      deliverySecret: requireString(entry.deliverySecret, `emailRelays.${id}.deliverySecret`),
+      filters: { from: list('from'), domains: list('domains'), subjectRegex: list('subjectRegex'), labels: list('labels') },
+      destination: { channelType: 'whatsapp', instance: typeof destination.instance === 'string' ? destination.instance : undefined, platformId: requireString(destination.platformId, `emailRelays.${id}.destination.platformId`) },
+      limits: { maxBodyChars, maxMessagesPerEvent },
+    };
+  }
+
   for (const [name, route] of Object.entries(mcpServers)) {
     if (route.auth && 'kind' in route.auth && !oauthProfiles[route.auth.profile]) {
       throw new GatewayConfigError(`mcpServers.${name}.auth.profile "${route.auth.profile}" is not configured`);
     }
   }
-  return { schemaVersion: 1, upstreams, models, mcpServers, oauthProfiles, agents };
+  return { schemaVersion: 1, upstreams, models, mcpServers, oauthProfiles, agents, emailRelays };
 }
 
 /** `KEY=value` lines; `#` comments and blanks ignored. Values are not unquoted-parsed beyond trimming. */
